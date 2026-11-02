@@ -17,8 +17,10 @@ func _init() -> void:
 	_verbs()
 	_frames()
 	_points()
+	_tls()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
-	quit(1 if _failed > 0 else 0)
+	# A suite that ran nothing (a script that did not compile) is not a pass.
+	quit(1 if _failed > 0 or _count == 0 else 0)
 
 
 func _check(ok: bool, what: String) -> void:
@@ -85,3 +87,25 @@ func _points() -> void:
 	_check(Protocol.point_of({"target": "player"}) == null, "a name is not a point")
 	_check(Protocol.point_of({"target": "a,b,c"}) == null, "garbage is not a point")
 	_check(Protocol.point_of({}) == null, "empty payload")
+
+
+## A Synth at home serves a self-signed certificate. Trust that, and only that: a password
+## must never go to a public host that fails verification.
+func _tls() -> void:
+	_eq(Protocol.host_of("wss://localhost:8000/api/x?token=a"), "localhost", "host of a url")
+	_eq(Protocol.host_of("ws://192.168.1.5:8080"), "192.168.1.5", "host with a port")
+	_eq(Protocol.host_of("wss://[::1]:8000/x"), "::1", "an ipv6 host")
+	_eq(Protocol.host_of("wss://synth.example.com/x"), "synth.example.com", "a host with no port")
+	for host: String in ["localhost", "127.0.0.1", "127.1.2.3", "::1", "10.0.0.2", "192.168.1.5", "172.16.0.1",
+			"172.31.255.1", "169.254.1.1", "synth.local", "nas.lan", "synthbox", "fe80::1", "fd12::1"]:
+		_check(Protocol.is_private_host(host), "%s is local" % host)
+	for host: String in ["", "example.com", "synth.example.com", "8.8.8.8", "172.32.0.1", "172.15.0.1",
+			"192.169.1.1", "11.0.0.1", "1.2.3", "2001:db8::1"]:
+		_check(not Protocol.is_private_host(host), "'%s' is not local" % host)
+	_check(Protocol.trusts_unverified_tls("wss://localhost:8000/api/vessel/retroxr/ws"), "wss to localhost is trusted")
+	_check(Protocol.trusts_unverified_tls("wss://192.168.1.5:8000/x"), "wss to the LAN is trusted")
+	_check(not Protocol.trusts_unverified_tls("wss://synth.example.com/x"), "wss to a public host is verified")
+	_check(not Protocol.trusts_unverified_tls("ws://localhost:8000/x"), "plain ws has no certificate to trust")
+	# The whole path from what a player types, the way the Summoner builds it.
+	_check(Protocol.trusts_unverified_tls(Protocol.socket_url("https://localhost:8000/")), "https://localhost:8000/ ends up trusted")
+	_eq(Protocol.socket_url("https://localhost:8000/", ""), "wss://localhost:8000/api/vessel/retroxr/ws", "and an empty password adds no token")

@@ -35,7 +35,7 @@ const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sou
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
-const MOD_VERSION := "0.3.0"
+const MOD_VERSION := "0.3.1"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -479,7 +479,7 @@ static func _reason_text(reason: String) -> String:
 			"protocol": return "Refused: Synth speaks another protocol version"
 		return "Refused by Synth (%s)" % code
 	match reason:
-		"refused": return "Refused: wrong password, or Synth is not reachable"
+		"refused": return "Could not reach Synth: is it running at that address and port? (a password is only needed if its WebUI has one)"
 		"connect_timeout": return "No answer from the server"
 		"welcome_timeout": return "The server did not welcome us"
 		"server_closed": return "Synth left the room"

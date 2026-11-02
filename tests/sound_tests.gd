@@ -22,7 +22,8 @@ func _init() -> void:
 		if arg.begins_with("--write="):
 			_write(arg.substr(8))
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
-	quit(1 if _failed > 0 else 0)
+	# A suite that ran nothing (a script that did not compile) is not a pass.
+	quit(1 if _failed > 0 or _count == 0 else 0)
 
 
 func _check(ok: bool, what: String) -> void:

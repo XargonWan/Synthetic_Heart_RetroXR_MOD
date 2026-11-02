@@ -46,7 +46,13 @@ func open_rift(url: String, hello: Dictionary) -> bool:
 		closed.emit("no_server")
 		return false
 	_peer = WebSocketPeer.new()
-	var err := _peer.connect_to_url(url)
+	# A Synth on this machine or network serves a self-signed certificate, which Godot refuses
+	# unless told otherwise. Only for those: a public host is verified as ever.
+	var tls: TLSOptions = null
+	if Protocol.trusts_unverified_tls(url):
+		tls = TLSOptions.client_unsafe()
+		print("[Rift] %s is on this machine or network: accepting its self-signed certificate" % Protocol.host_of(url))
+	var err := _peer.connect_to_url(url, tls)
 	if err != OK:
 		print("[Rift] connect_to_url failed (%s): %s" % [error_string(err), _safe_url(url)])
 		_peer = null

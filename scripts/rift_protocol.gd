@@ -47,6 +47,50 @@ static func socket_url(server: String, token: String = "") -> String:
 	return url
 
 
+## The host part of a socket URL ("wss://synth.local:8000/x?t=1" -> "synth.local").
+static func host_of(url: String) -> String:
+	var s := url
+	if s.contains("://"):
+		s = s.substr(s.find("://") + 3)
+	for stop: String in ["/", "?", "#"]:
+		if s.contains(stop):
+			s = s.substr(0, s.find(stop))
+	if s.begins_with("["):  # [::1]:8000
+		return s.substr(1, maxi(s.find("]") - 1, 0))
+	if s.contains(":"):
+		s = s.substr(0, s.find(":"))
+	return s
+
+
+## A machine on this one or this network: loopback, a private range, a link-local address,
+## `.local`, or a bare name with no dot. No public authority signs a certificate for any of
+## these, so a Synth there serves a self-signed one.
+static func is_private_host(host: String) -> bool:
+	var h := host.to_lower()
+	if h.is_empty():
+		return false
+	if h == "localhost" or h == "::1" or h.ends_with(".local") or h.ends_with(".lan") or h.ends_with(".home.arpa"):
+		return true
+	if not h.contains(".") and not h.contains(":"):
+		return true
+	var parts := h.split(".")
+	var numeric := parts.size() == 4
+	for part: String in parts:
+		numeric = numeric and part.is_valid_int()
+	if numeric:
+		var a := int(parts[0])
+		var b := int(parts[1])
+		return a == 127 or a == 10 or (a == 192 and b == 168) or (a == 172 and b >= 16 and b <= 31) \
+			or (a == 169 and b == 254)
+	return h.begins_with("fe80:") or h.begins_with("fc") or h.begins_with("fd")
+
+
+## Whether to accept a certificate nobody vouches for: a wss:// socket to a local or private
+## address. A public host is verified like any other, so a password never goes to a stranger.
+static func trusts_unverified_tls(url: String) -> bool:
+	return url.begins_with("wss://") and is_private_host(host_of(url))
+
+
 static func hello(room: String, capabilities: Array, animations: Array, mod_version: String) -> Dictionary:
 	return {
 		"type": "hello",

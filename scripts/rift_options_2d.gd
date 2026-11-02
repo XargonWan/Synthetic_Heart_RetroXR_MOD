@@ -47,7 +47,7 @@ func _build_ui() -> void:
 	root.add_child(_status)
 
 	_server_edit = _field_row(root, "Server", "192.168.1.10:8080")
-	_token_edit = _field_row(root, "Password", "access token")
+	_token_edit = _field_row(root, "Password", "none (only if Synth asks for one)")
 	_token_edit.secret = true
 
 	_show_btn = Button.new()
