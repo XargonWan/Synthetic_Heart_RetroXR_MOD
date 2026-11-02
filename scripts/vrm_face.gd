@@ -125,6 +125,66 @@ func _load_vrm1(vrm: Dictionary, scene_node: Callable) -> void:
 						"w": float((b as Dictionary).get("weight", 1.0))})
 			if not binds.is_empty():
 				_binds[name.to_lower()] = binds
+	# A 0.x name (joy, a) resolves to its 1.0 preset (happy, aa), so either spelling finds the expression.
+	for v1: String in VRM0_NAMES:
+		if _binds.has(v1) and not _binds.has(VRM0_NAMES[v1]):
+			_aliases[VRM0_NAMES[v1]] = v1
+
+
+## Which blend shapes of `mi` an expression moves (so the others can be dropped): a sorted list of indices.
+func blend_shapes_used(mi: MeshInstance3D) -> Array:
+	var used := {}
+	for key: String in _binds:
+		for b: Dictionary in _binds[key]:
+			if b["mi"] == mi and int(b["idx"]) >= 0:
+				used[int(b["idx"])] = true
+	var out: Array = used.keys()
+	out.sort()
+	return out
+
+
+## The blend shapes of `mi` were rebuilt without some: `map` is {old index: new index}. A bind to one that is
+## gone is dropped.
+func remap_blend_shapes(mi: MeshInstance3D, map: Dictionary) -> void:
+	for key: String in _binds.keys():
+		var kept: Array = []
+		for b: Dictionary in _binds[key]:
+			if b["mi"] != mi:
+				kept.append(b)
+			elif map.has(int(b["idx"])):
+				b["idx"] = int(map[int(b["idx"])])
+				kept.append(b)
+		if kept.is_empty():
+			_binds.erase(key)
+		else:
+			_binds[key] = kept
+
+
+## The expressions as plain data (a mesh instance by its path under `root`), to be saved with the body and read
+## back by from_data(): the cached body has no glTF to read them from.
+func to_data(root: Node) -> Dictionary:
+	var out := {}
+	for key: String in _binds:
+		var list: Array = []
+		for b: Dictionary in _binds[key]:
+			list.append({"path": str(root.get_path_to(b["mi"])), "idx": int(b["idx"]), "w": float(b["w"])})
+		out[key] = list
+	return {"binds": out, "aliases": _aliases.duplicate()}
+
+
+func from_data(data: Dictionary, root: Node) -> int:
+	_binds.clear()
+	_aliases = (data.get("aliases", {}) as Dictionary).duplicate() if data.get("aliases") is Dictionary else {}
+	var binds: Dictionary = data.get("binds", {}) if data.get("binds") is Dictionary else {}
+	for key: String in binds:
+		var list: Array = []
+		for b: Variant in binds[key]:
+			var mi := root.get_node_or_null(NodePath(str((b as Dictionary).get("path", "")))) as MeshInstance3D
+			if mi != null:
+				list.append({"mi": mi, "idx": int((b as Dictionary).get("idx", -1)), "w": float((b as Dictionary).get("w", 1.0))})
+		if not list.is_empty():
+			_binds[key] = list
+	return _binds.size()
 
 
 func has_expression(name: String) -> bool:

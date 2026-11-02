@@ -11,6 +11,8 @@ signal close_requested
 signal settings_changed(server: String, token: String)
 signal power_pressed
 
+const BodyCache := preload("res://mods/xenu.synth_rift/scripts/body_cache.gd")
+
 const COLOR_BG := Color(0.08, 0.08, 0.16, 0.96)
 const COLOR_ROW := Color(0.65, 0.65, 0.80)
 const COLOR_OK := Color(0.45, 1.0, 0.65)
@@ -67,6 +69,15 @@ func _build_ui() -> void:
 		_commit()
 		power_pressed.emit())
 	root.add_child(_power)
+
+	# Her body is made once per skin and kept (see BodyCache); this lets the player throw it away, e.g. to free the space.
+	var cache_btn := Button.new()
+	cache_btn.text = "Forget Synth's saved body"
+	cache_btn.custom_minimum_size = Vector2(0, 34)
+	cache_btn.pressed.connect(func() -> void:
+		var n := BodyCache.clear()
+		cache_btn.text = "Forgotten (%d)" % n)
+	root.add_child(cache_btn)
 
 
 func _field_row(parent: Container, caption: String, placeholder: String) -> LineEdit:

@@ -41,9 +41,14 @@ var _gaze_checked := false
 var _was_ethereal := false
 var _done := false
 var _said := {}
+var _shots_dir := ""
+var _shot_n := 0
+var _shot_tick := 0
 var _first_puppet := 0
 var _saw_mouth := false
-var _saw_status := false
+var _saw_summon := false
+var _summon_ended := false
+var _saw_status_label := false
 var _saw_joy := false
 var _saw_swap := false
 var _blinks := 0
@@ -76,6 +81,30 @@ func _ready() -> void:
 	_camera.look_at(Vector3(0, 0.3, 0))
 	_camera.current = true
 
+	# SHOTS=<folder> (windowed): a picture every few frames of the whole summon, the way the player sees it.
+	_shots_dir = OS.get_environment("SHOTS")
+	if not _shots_dir.is_empty():
+		for o in LoadingOverlay.owners():
+			LoadingOverlay.end(o)
+		LoadingOverlay.suspend()
+		DirAccess.make_dir_recursive_absolute(_shots_dir)
+		var e := Environment.new()
+		e.background_mode = Environment.BG_COLOR
+		e.background_color = Color(0.1, 0.1, 0.16)
+		e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		e.ambient_light_color = Color(0.5, 0.5, 0.6)
+		var env := WorldEnvironment.new()
+		env.environment = e
+		add_child(env)
+		var sun := DirectionalLight3D.new()
+		sun.rotation_degrees = Vector3(-50, 30, 0)
+		sun.light_energy = 0.7
+		add_child(sun)
+		var ground := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(12, 12)
+		ground.mesh = plane
+		add_child(ground)
 	var packed: PackedScene = load(SCENE)
 	_check(packed != null, "the scene loads")
 	if packed == null:
@@ -85,7 +114,7 @@ func _ready() -> void:
 	add_child(_summoner)
 	_summoner.position = Vector3(0, 0, 0)   # its origin is on the floor, like a cabinet's
 	_summoner.freeze = true
-	_summoner.charge_seconds = 0.4
+	_summoner.charge_seconds = float(OS.get_environment("CHARGE")) if not OS.get_environment("CHARGE").is_empty() else 0.4
 	_summoner.phase_changed.connect(func(p: int) -> void: _phases.append(p))
 	print("[probe] summoner in the room; expect='%s'" % _expect)
 	_check(not _summoner.is_on(), "a Summoner starts OFF")
@@ -262,6 +291,11 @@ func _menu_then_open() -> void:
 
 
 func _process(delta: float) -> void:
+	if not _shots_dir.is_empty() and _summoner != null and _summoner.phase() >= 1 and _shot_n < 400:
+		_shot_tick += 1
+		if _shot_tick % 3 == 0:
+			get_viewport().get_texture().get_image().save_png("%s/s_%03d.png" % [_shots_dir, _shot_n])
+			_shot_n += 1
 	_t += delta
 	if _done or _summoner == null:
 		return
@@ -285,6 +319,8 @@ func _process(delta: float) -> void:
 		print("[probe] body appeared at %s" % str(body.global_position))
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
 		_put_down_a_vase.call_deferred()
+		_check(body.presence() == "summon", "Karada says she is being summoned while she steps out (%s)" % body.presence())
+		_saw_summon = true
 		# The floor is at y = 0 and the capsule's centre at 0.3: she stands on the floor, not on the capsule.
 		_check(absf(body.global_position.y) < 0.05, "she stands on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
 	# Karada drives her: think while the avatar thinks, her voice from her head, idle again after.
@@ -293,6 +329,10 @@ func _process(delta: float) -> void:
 			_saw_think = true
 		if body.voices_played() >= 1:
 			_saw_voice = true
+		if _saw_summon and body.presence() == "" and not _summon_ended:
+			_summon_ended = true
+		if body.get_node_or_null("Status") != null:
+			_saw_status_label = true
 		if _first_puppet == 0:
 			_first_puppet = body._puppet.get_instance_id()
 		elif body._puppet.get_instance_id() != _first_puppet:
@@ -307,8 +347,6 @@ func _process(delta: float) -> void:
 			if blinking and not _was_blinking:
 				_blinks += 1
 			_was_blinking = blinking
-		if body.karada_state() == "think" and body._status.visible and body._status.text.begins_with("thinking"):
-			_saw_status = true
 		if _saw_think and body.karada_state() == "idle" and body._puppet.playing() == "idle":
 			_saw_idle_again = true
 	# What Synth says lands in the chat log (the harness makes her say a line once she is out).
@@ -390,9 +428,10 @@ func _process(delta: float) -> void:
 		_check(_saw_cyan, "the screen was cyan while open")
 		_check(_saw_synth_line, "what Synth said reached the chat log")
 		_check(_saw_think, "her body played the think clip when Karada said think")
+		_check(_summon_ended, "and the presence ended once she was out (the server heard `summoned`)")
 		_check(_saw_voice, "her voice (a WAV from the server) was played from her head")
 		_check(_saw_mouth, "her mouth opened while she spoke")
-		_check(_saw_status, "'thinking' showed over her head while Karada said think")
+		_check(not _saw_status_label, "nothing is written over her head about what she is doing")
 		_check(_saw_joy, "an emotion Karada sent showed on her face")
 		_check(_saw_swap, "a change of skin put her in a new body")
 		_check(_blinks >= 1, "she blinked by herself (%d)" % _blinks)

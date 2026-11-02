@@ -8,8 +8,8 @@
 script = ExtResource("1_panel")
 
 [node name="RiftOptionsViewport" parent="." instance=ExtResource("2_vp")]
-screen_size = Vector2(0.52, 0.36)
+screen_size = Vector2(0.52, 0.41)
 scene = ExtResource("3_ui")
-viewport_size = Vector2(520, 360)
+viewport_size = Vector2(520, 410)
 transparent = 1
 unshaded = true

@@ -14,6 +14,7 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/summoner_model.gd` the pod (built in code, 2.2 m, the screen 12 x 7 cm at chest height)
 - `scripts/summoner_sounds.gd` the teleport sounds, synthesised; `tests/sound_tests.gd -- --write=DIR` writes them as wav
 - `scripts/summoner_view.gd` what Synth sees when she steps out (bearing, distance, side)
+- `scripts/vrm_budget.gd`, `body_cache.gd` what a body may cost (textures, morph targets, triangles per tier) and the finished body kept under user://
 - `scripts/vrm_face.gd` her face: the WebUI's FacialDriver (blink, emotion layers, mouth from her voice's loudness)
 - `scripts/karada_puppet.gd` her VRM + Mixamo clips retargeted by hand, her gaze
 - `assets/` the Synth logo (no text) for the pod's flanks, and its glow map

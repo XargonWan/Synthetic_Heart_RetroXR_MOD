@@ -112,6 +112,8 @@ async def _drive():
         }
         for what, ok in checks.items():
             print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
+        # She is greeting the player: Karada's states wait until she is done (that is the point), so let her finish.
+        await asyncio.sleep(7.0)
         # Karada: her avatar thinks, then speaks (a real clip from /media), then is idle again.
         await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "think"}})
         await asyncio.sleep(2.0)
@@ -196,11 +198,13 @@ async def main():
         env["PROBE_SERVER"] = f"127.0.0.1:{PORT}"
         # In the home folder, not /tmp: a flatpak session's /tmp is private to it.
         env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_", dir=os.path.expanduser("~/.cache"))
-    cmd = [GODOT, "--headless", "--path", PROJECT, *PROBE_ARGS]
+    # WINDOWED=1: a real window (the picture is drawn; SHOTS=<folder> saves frames of the summon). Never headless for a picture.
+    head = ["--resolution", "640x480", "--position", "20,20"] if os.environ.get("WINDOWED") else ["--headless"]
+    cmd = [GODOT, *head, "--path", PROJECT, *PROBE_ARGS]
     if os.environ.get("HOST"):
         # Run Godot on the host from inside a flatpak (the GDExtensions only load there;
         # loopback is shared). The probe's own variables go in with --env.
-        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME")
+        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE")
         cmd = ["flatpak-spawn", "--host", *[f"--env={k}={env[k]}" for k in keys if k in env], *cmd]
     proc = await asyncio.create_subprocess_exec(
         *cmd,

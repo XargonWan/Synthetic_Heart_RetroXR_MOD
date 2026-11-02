@@ -18,6 +18,8 @@
 extends Node3D
 
 const VrmFace := preload("res://mods/xenu.synth_rift/scripts/vrm_face.gd")
+const VrmBudget := preload("res://mods/xenu.synth_rift/scripts/vrm_budget.gd")
+const BodyCache := preload("res://mods/xenu.synth_rift/scripts/body_cache.gd")
 
 ## [VRM bone, Mixamo bone] with {s} for the side: "L"/"Left" and "R"/"Right".
 const BODY_BONES := [
@@ -47,26 +49,65 @@ var _playing := ""
 var _after := ""
 var _lib := AnimationLibrary.new()
 var _clips: Dictionary = {}
+## A clip that does not loop has played to its end.
+signal clip_finished(clip_name: String)
+
+## What the body cost and how it was brought inside its budget (VrmBudget): tier, triangles, ... and the time.
+var budget: Dictionary = {}
+
 ## Her face (blink, emotion, mouth): null until a model is loaded.
 var face: RefCounted = null
 
 
 ## The model, from the bytes of a .vrm. True when it loaded with a skeleton.
-func load_model(vrm: PackedByteArray) -> bool:
-	var doc := GLTFDocument.new()
-	var state := GLTFState.new()
-	var err := doc.append_from_buffer(vrm, "", state)
-	if err != OK:
-		print("[Rift] VRM did not load: %s" % error_string(err))
-		return false
-	var root := doc.generate_scene(state) as Node3D
+## The model, from the bytes of a .vrm, brought inside the tier's budget (VrmBudget) and kept (BodyCache): the
+## second time the same file is asked for, the finished body is read back and nothing is parsed. True when it
+## loaded with a skeleton. `use_cache` false makes it fresh and does not keep it (the tests).
+func load_model(vrm: PackedByteArray, use_cache: bool = true) -> bool:
+	var t0 := Time.get_ticks_msec()
+	var tier_name := VrmBudget.tier_name()
+	var key := BodyCache.key_for(vrm, tier_name) if use_cache else ""
+	var root: Node3D = null
+	var from_cache := false
+	var stats := {}
+	if use_cache:
+		var cached := BodyCache.load_body(key)
+		if not cached.is_empty():
+			root = cached["root"]
+			stats = cached["stats"]
+			face = VrmFace.new()
+			face.call("from_data", cached["face"], root)
+			from_cache = true
 	if root == null:
-		return false
+		# The document is made INSIDE the image step: it takes the registered extensions when it is created.
+		var made: Array = []
+		var err: int = VrmBudget.with_image_budget(VrmBudget.tier(), func() -> int:
+			var doc := GLTFDocument.new()
+			var state := GLTFState.new()
+			made.append(doc)
+			made.append(state)
+			return doc.append_from_buffer(vrm, "", state))
+		if err != OK:
+			print("[Rift] VRM did not load: %s" % error_string(err))
+			return false
+		var doc: GLTFDocument = made[0]
+		var state: GLTFState = made[1]
+		root = doc.generate_scene(state) as Node3D
+		if root == null:
+			return false
+		_build_face(state, root)
+		var images := VrmBudget.last_image_stats()
+		print("[Rift] image step: %s" % str(images))
+		var reduced := VrmBudget.reduce_meshes(root, face, VrmBudget.tier())
+		var packed := VrmBudget.compress_textures(root, VrmBudget.tier())
+		stats = {"images": images, "reduced": reduced, "textures": packed}
 	var skels := root.find_children("*", "Skeleton3D", true, false)
 	if skels.is_empty():
 		print("[Rift] VRM has no skeleton")
 		root.queue_free()
 		return false
+	if use_cache and not from_cache:
+		BodyCache.store(key, root, face.call("to_data", root), stats)
 	if model != null:
 		model.queue_free()
 	model = root
@@ -74,11 +115,26 @@ func load_model(vrm: PackedByteArray) -> bool:
 	model.name = "Model"
 	add_child(model)
 	height = _measure_height()
-	_build_face(state, root)
-	# Keep it from drawing a frame in the pose the file ships in until it has one.
-	print("[Rift] VRM loaded: %d bones, %.2f m" % [skeleton.get_bone_count(), height])
+	var measured := VrmBudget.measure(model)
+	budget = {"tier": tier_name, "from_cache": from_cache, "tris": measured["tris"], "verts": measured["verts"],
+		"surfaces": measured["surfaces"], "blend_shapes": measured["blend_shapes"], "texture_bytes": measured["texture_bytes"],
+		"texture_max": measured["texture_max"], "ms": Time.get_ticks_msec() - t0,
+		"stats": stats}
+	print("[Rift] VRM loaded (%s%s): %d bones, %.2f m, %d tris, %d verts, %d surfaces, %d blend shapes, textures %s (%.0f MB in the materials, largest %d px), %d ms" % [
+		tier_name, ", from the cache" if from_cache else "", skeleton.get_bone_count(), height, measured["tris"],
+		measured["verts"], measured["surfaces"], measured["blend_shapes"], _images_text(stats),
+		float(measured["texture_bytes"]) / 1048576.0, measured["texture_max"], budget["ms"]])
 	_bind()
 	return true
+
+
+## What the texture step did, as text: "24 textures, 136 MB -> 24 MB".
+func _images_text(stats: Dictionary) -> String:
+	var t: Dictionary = stats.get("textures", {}) if stats.get("textures") is Dictionary else {}
+	if t.is_empty() or int(t.get("textures", 0)) == 0:
+		return "as they were"
+	return "%d compressed, %.0f MB -> %.0f MB%s" % [int(t.get("textures", 0)), float(t.get("bytes_before", 0)) / 1048576.0,
+		float(t.get("bytes_after", 0)) / 1048576.0, (", %d would not compress" % int(t["errors"])) if int(t.get("errors", 0)) > 0 else ""]
 
 
 ## Her expressions, from the model file (see VrmFace). Godot hands no scene node back for a skinned mesh
@@ -107,6 +163,133 @@ func set_persona(persona: Dictionary) -> void:
 	if face != null and persona.get("blendshape_map") is Dictionary:
 		face.set("blendshape_map", persona["blendshape_map"])
 		print("[Rift] her face map: %d names" % (persona["blendshape_map"] as Dictionary).size())
+
+
+# ── fading her in and out ────────────────────────────────────────────────────
+#
+# GeometryInstance3D.transparency is a dither, and on this model it is not one fade: a cut-out material (her
+# clothes) is discarded as soon as it is a little see-through while the skin only thins, so at 30% she is
+# NAKED and at 55% nothing is drawn at all. So she fades through her MATERIALS: each one is copied once into
+# an alpha-blended twin (with a depth pre-pass, so her own arm does not show through her own body) and every
+# twin has the same alpha. At zero the originals are put back, exactly as the file made them.
+
+## [{mi, surface, original: Material (the override that was there, or null), twin: BaseMaterial3D}]
+var _fade_slots: Array = []
+var _fade_prepared := false
+var _fade_amount := 0.0
+
+
+func _prepare_fade() -> void:
+	if _fade_prepared or model == null:
+		return
+	_fade_prepared = true
+	var twins := {}
+	for n: Node in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for surface in mi.mesh.get_surface_count():
+			var source := mi.get_active_material(surface)
+			if not (source is BaseMaterial3D):
+				continue
+			if not twins.has(source):
+				var twin := source.duplicate() as BaseMaterial3D
+				twin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
+				twins[source] = twin
+			_fade_slots.append({"mi": mi, "surface": surface, "original": mi.get_surface_override_material(surface),
+				"twin": twins[source], "source": source})
+
+
+## 0 = as the file made her, 1 = gone; one number for every part. The twins are only worn while it is above 0.
+func set_fade(amount: float) -> void:
+	_prepare_fade()
+	if _fade_slots.is_empty():
+		for part: Node in find_children("*", "GeometryInstance3D", true, false):
+			(part as GeometryInstance3D).transparency = amount
+		return
+	var was := _fade_amount
+	_fade_amount = clampf(amount, 0.0, 1.0)
+	if _fade_amount <= 0.0:
+		if was > 0.0:
+			for slot: Dictionary in _fade_slots:
+				(slot["mi"] as MeshInstance3D).set_surface_override_material(int(slot["surface"]), slot["original"])
+		return
+	var alpha := 1.0 - _fade_amount
+	if was <= 0.0:
+		for slot: Dictionary in _fade_slots:
+			(slot["mi"] as MeshInstance3D).set_surface_override_material(int(slot["surface"]), slot["twin"])
+	var seen := {}
+	for slot: Dictionary in _fade_slots:
+		var twin: BaseMaterial3D = slot["twin"]
+		if not seen.has(twin):
+			seen[twin] = true
+			var c := twin.albedo_color
+			c.a = alpha * (slot["source"] as BaseMaterial3D).albedo_color.a
+			twin.albedo_color = c
+
+
+func fade_amount() -> float:
+	return _fade_amount
+
+
+## Every part's current fade, for the tests: material alphas while fading.
+func fade_alphas() -> Array:
+	var out: Array = []
+	for slot: Dictionary in _fade_slots:
+		var m := (slot["mi"] as MeshInstance3D).get_active_material(int(slot["surface"]))
+		if m is BaseMaterial3D:
+			out.append(snappedf((m as BaseMaterial3D).albedo_color.a / maxf((slot["source"] as BaseMaterial3D).albedo_color.a, 0.0001), 0.001))
+	return out
+
+
+## True once every part has been drawn (see warm()).
+var warmed := false
+
+
+## Pay the first draw where nobody looks. A model that is first drawn on the frame it appears compiles its
+## pipelines and uploads its textures there, and arrives in pieces (the clothes after the skin); so every
+## part is drawn once, off screen, in the two states it will be seen in (see-through and solid), before she is
+## shown. The same trick ModelWarmer plays for the machines. A headless run draws nothing, so there is
+## nothing to warm (and a SubViewport that updates always hangs one).
+func warm() -> void:
+	if warmed or model == null:
+		warmed = true
+		return
+	if DisplayServer.get_name() == "headless":
+		warmed = true
+		return
+	var t0 := Time.get_ticks_msec()
+	var home := get_parent()
+	var viewport := SubViewport.new()
+	viewport.name = "BodyWarmViewport"
+	viewport.size = Vector2i(256, 256)
+	viewport.own_world_3d = true
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	home.add_child(viewport)
+	var camera := Camera3D.new()
+	camera.position = Vector3(0.0, height * 0.55, height * 2.0)
+	viewport.add_child(camera)
+	camera.look_at_from_position(camera.position, Vector3(0.0, height * 0.5, 0.0))
+	camera.current = true
+	viewport.add_child(DirectionalLight3D.new())
+	var was_visible := visible
+	reparent(viewport, false)
+	visible = true
+	if _player != null and _clips.has("idle"):
+		play("idle", true)
+		_retarget()
+	var parts: Array = find_children("*", "GeometryInstance3D", true, false)
+	for amount: float in [0.7, 0.4, 0.0]:
+		set_fade(amount)
+		for i in 3:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+	visible = was_visible
+	reparent(home, false)
+	position = Vector3.ZERO
+	viewport.queue_free()
+	warmed = true
+	print("[Rift] her body is warmed: %d parts drawn in %d ms" % [parts.size(), Time.get_ticks_msec() - t0])
 
 
 ## One animation, from the bytes of a Mixamo .fbx, under `clip_name`. The first one loaded
@@ -230,6 +413,7 @@ func play_then(clip_name: String, next: String) -> bool:
 
 
 func _on_clip_finished(finished: StringName) -> void:
+	clip_finished.emit(String(finished))
 	if _after != "" and str(finished) == _playing:
 		var next := _after
 		_after = ""

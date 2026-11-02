@@ -39,7 +39,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.7.0"
+const MOD_VERSION := "0.8.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 const MAX_SIGHTINGS := 3
@@ -111,6 +111,8 @@ var _assets_state := ""
 var _fetcher: Node = null
 var _karada_state := "idle"
 var _skin_loading := false
+## Karada's presence as last told ("summon" while the vessel introduces her), kept for a body that is not there yet.
+var _presence := ""
 var _room_memory: Dictionary = {}
 var _room_seen := false
 var _skin_again: Dictionary = {}
@@ -402,8 +404,9 @@ func _arrive() -> void:
 		return
 	_body.world_lookup = Callable(self, "_lookup_entity")
 	_body.set_fetcher(_fetcher)
+	_body.set_karada_state(_karada_state)
+	_body.set_presence(_presence)
 	if _puppet != null and _assets_state == "ready":
-		_body.set_karada_state(_karada_state)
 		_body.attach_puppet(_puppet)
 		_puppet = null
 	elif _assets_state == "failed":
@@ -441,6 +444,8 @@ func _arrive() -> void:
 func _on_karada(kind: String, payload: Dictionary) -> void:
 	if kind == "animation":
 		_karada_state = str(payload.get("state", "idle"))
+	if kind == "presence":
+		_presence = str(payload.get("state", ""))
 	if kind == "model":
 		_change_skin(payload)
 		return
@@ -662,6 +667,11 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 			await puppet.call("choose_most_upright", clip_name, names)
 		else:
 			puppet.call("alias_clip", clip_name, names[0])
+	# Drawn once, off screen, before anybody is shown her: it is what keeps her from arriving in pieces.
+	await puppet.call("warm")
+	if not bool(still_wanted.call()):
+		puppet.queue_free()
+		return null
 	return puppet
 
 

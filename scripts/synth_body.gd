@@ -34,9 +34,13 @@ var _visual: Node3D = null
 var _capsule: MeshInstance3D = null
 var _puppet: Node3D = null
 var _anim_state := ""
+## The one-off clip she is playing (a greeting, an emote); while it plays Karada's states wait.
+var _one_shot := ""
 ## What Synth's Karada says she is doing (idle, think, write, talk, touch): her body follows it,
 ## except while she walks, and again when she stops.
 var _karada_state := "idle"
+## Karada's presence: "summon" while a vessel is introducing her into this room (a rift opening), "" otherwise.
+var _presence := ""
 var _fetcher: Node = null
 var _voice: AudioStreamPlayer3D = null
 var _voice_queue: Array = []
@@ -44,8 +48,6 @@ var _voice_heard := 0
 ## Her voice has a bus of its own, with a capture on it: how loud she is right now opens her mouth.
 const VOICE_BUS := "SynthVoice"
 var _capture: AudioEffectCapture = null
-var _status: Label3D = null
-var _status_clock := 0.0
 ## Set by the Summoner: (query: String) -> Dictionary of the nearest thing in the room called that
 ## ({name, label, type, systemid, powered, position}), or {}. "player" is handled here.
 var world_lookup: Callable = Callable()
@@ -158,22 +160,8 @@ func _ready() -> void:
 	add_child(_voice)
 	_voice.finished.connect(_next_voice)
 
-	# What she is doing in her head, where the player can see it (the WebUI shows the same).
-	_status = Label3D.new()
-	_status.name = "Status"
-	_status.pixel_size = 0.0016
-	_status.font_size = 40
-	_status.outline_size = 8
-	_status.modulate = Color(0.43, 1.0, 1.0)
-	_status.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_status.no_depth_test = true
-	_status.visible = false
-	_status.position = Vector3(0, 1.95, 0)
-	add_child(_status)
 
-
-func _process(delta: float) -> void:
-	_update_status(delta)
+func _process(_delta: float) -> void:
 	_lip_sync()
 
 
@@ -323,7 +311,8 @@ func _follow_the_player(delta: float) -> void:
 
 func _end_walk(ok: bool, detail: String) -> void:
 	_goal = null
-	_set_anim(_rest_anim())
+	_anim_state = ""
+	_refresh_anim()
 	_stuck_for = 0.0
 	_stuck_sample = 0.0
 	velocity = Vector3.ZERO
@@ -332,27 +321,41 @@ func _end_walk(ok: bool, detail: String) -> void:
 	_walk_finished.emit()
 
 
-## Materialise: the body grows out of a point on the floor, fast then slow, brightest at
-## the start. The collider is not scaled (physics bodies do not like it), only the picture.
+## She comes into view. Her own body (loaded and warmed beforehand, see KaradaPuppet.warm) fades in as ONE
+## thing, every part at the same value, with nothing growing and nothing arriving after the rest; the
+## capsule that stands in for a body without a skin grows out of a point on the floor, fast then slow.
+## The collider is not scaled (physics bodies do not like it), only the picture.
 func appear(seconds: float) -> void:
+	if _puppet != null:
+		_visual.scale = Vector3.ONE
+		_set_fade(1.0)
+		_visual.visible = true
+		var fade := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		fade.tween_method(_set_fade, 1.0, ETHEREAL_FADE, seconds)
+		await fade.finished
+		return
 	_visual.scale = Vector3(0.05, 0.02, 0.05)
 	_visual.visible = true
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_visual, "scale", Vector3.ONE, seconds)
-	if _puppet == null:
-		var mat := _capsule.mesh.material as StandardMaterial3D
-		mat.emission_energy_multiplier = 3.0
-		tw.tween_property(mat, "emission_energy_multiplier", 0.4, seconds * 1.4)
+	var mat := _capsule.mesh.material as StandardMaterial3D
+	mat.emission_energy_multiplier = 3.0
+	tw.tween_property(mat, "emission_energy_multiplier", 0.4, seconds * 1.4)
 	await tw.finished
 
 
-## The reverse: it shrinks into the floor and is gone.
+## The reverse: her body fades out as one thing; the capsule shrinks into the floor.
 func disappear(seconds: float) -> void:
+	if _puppet != null:
+		var fade := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		fade.tween_method(_set_fade, ETHEREAL_FADE, 1.0, seconds)
+		await fade.finished
+		_visual.visible = false
+		return
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_property(_visual, "scale", Vector3(0.05, 0.02, 0.05), seconds)
-	if _puppet == null:
-		var mat := _capsule.mesh.material as StandardMaterial3D
-		tw.tween_property(mat, "emission_energy_multiplier", 3.0, seconds)
+	var mat := _capsule.mesh.material as StandardMaterial3D
+	tw.tween_property(mat, "emission_energy_multiplier", 3.0, seconds)
 	await tw.finished
 	_visual.visible = false
 
@@ -368,6 +371,7 @@ func set_ethereal(on: bool) -> void:
 	_ethereal = on
 	collision_layer = 0 if on else 1
 	_set_fade(ETHEREAL_FADE if on else 0.0)
+	_refresh_anim()
 
 
 func is_ethereal() -> bool:
@@ -383,11 +387,15 @@ func materialise(seconds: float) -> void:
 	tw.tween_method(_set_fade, ETHEREAL_FADE, 0.0, seconds)
 	await tw.finished
 	collision_layer = 1
+	_refresh_anim()
 
 
 ## How see-through she is: 0 solid, 1 gone (dithered per instance; a renderer that ignores it, the
 ## Quest's, shows her solid, which is no worse than before).
 func _set_fade(amount: float) -> void:
+	if _puppet != null:
+		_puppet.call("set_fade", amount)
+		return
 	for n: Node in _visual_parts():
 		(n as GeometryInstance3D).transparency = amount
 
@@ -418,9 +426,13 @@ func attach_puppet(puppet: Node3D) -> void:
 	puppet.rotation = Vector3.ZERO
 	_puppet = puppet
 	_visual = puppet
+	if puppet.has_signal("clip_finished") and not puppet.is_connected("clip_finished", _on_clip_finished):
+		puppet.connect("clip_finished", _on_clip_finished)
 	_capsule.visible = false
 	_bubble.position.y = float(puppet.get("height")) + 0.25
-	_set_anim(_rest_anim())
+	_one_shot = ""
+	_anim_state = ""
+	_refresh_anim()
 	if _ethereal:
 		_set_fade(ETHEREAL_FADE)
 	print("[Rift] Synth's own body is on (%.2f m)" % float(puppet.get("height")))
@@ -451,22 +463,48 @@ func has_puppet() -> bool:
 ## name if her skin has it, else standing. A state that is not one of her clips changes nothing.
 func set_karada_state(state: String) -> void:
 	_karada_state = state if not state.is_empty() else "idle"
-	_status_clock = 0.0
-	# Walking wins while she walks; _end_walk puts the state back.
-	if _goal == null and _puppet != null:
-		_anim_state = ""
-		_set_anim(_rest_anim())
+	_refresh_anim()
 
 
 func karada_state() -> String:
 	return _karada_state
 
 
-## The clip she rests in: Karada's state if her skin has it, else standing.
+## Karada's presence (`summon` while she is being introduced), as the server says it.
+func set_presence(presence: String) -> void:
+	_presence = "" if presence in ["", "idle"] else presence
+	_refresh_anim()
+
+
+func presence() -> String:
+	return _presence
+
+
+## Karada's states are what her avatar is doing in her HEAD (think, write, touch): on the WebUI that is all she does,
+## so they are always shown. Here she also has a body that does things, and a person can walk and think at once:
+## she shows a state's clip only when she is not busy, and the activity wins otherwise (the state is remembered, so
+## she goes back to it when the activity ends). `summon` is the state of being introduced into a rift: it is not a
+## pose of its own (a skin may ship `animations/summon/`), it is the vessel saying "she is arriving".
+func is_busy() -> bool:
+	return _goal != null or _one_shot != "" or _ethereal or _presence == "summon"
+
+
+## The clip she rests in. Standing while busy; the state's clip (if her skin has it) when she is not.
 func _rest_anim() -> String:
-	if _puppet != null and _karada_state != "idle" and bool(_puppet.call("has_clip", _karada_state)):
-		return _karada_state
-	return "idle"
+	if _puppet == null:
+		return "idle"
+	if _presence == "summon":
+		return "summon" if bool(_puppet.call("has_clip", "summon")) else "idle"
+	if is_busy() or _karada_state == "idle":
+		return "idle"
+	return _karada_state if bool(_puppet.call("has_clip", _karada_state)) else "idle"
+
+
+## Put the clip back to what she should be doing now, unless a walk or a one-shot has her.
+func _refresh_anim() -> void:
+	if _puppet == null or _goal != null or _one_shot != "":
+		return
+	_set_anim(_rest_anim())
 
 
 ## One frame from Karada.
@@ -479,6 +517,8 @@ func on_karada(kind: String, payload: Dictionary) -> void:
 			_face_call("set_descriptor", descriptor if descriptor is Dictionary else {})
 		"audio":
 			_hear(payload)
+		"presence":
+			set_presence(str(payload.get("state", "")))
 		"face":
 			if not (payload.get("values", {}) as Dictionary).is_empty():
 				print("[Rift] Karada face: %s" % str(payload.get("values", {})))
@@ -503,24 +543,6 @@ func _face_call(method: String, arg: Variant) -> void:
 ## The persona's blendshape map and the rest of her face come with the model: hand them over.
 func face_of() -> RefCounted:
 	return _puppet.get("face") if _puppet != null else null
-
-
-## "thinking ..." / "writing ..." over her head while Karada says so, the dots counting.
-func _update_status(delta: float) -> void:
-	var word := ""
-	if _karada_state == "think":
-		word = "thinking"
-	elif _karada_state == "write":
-		word = "writing"
-	if word.is_empty() or _status == null:
-		if _status != null and _status.visible:
-			_status.visible = false
-		return
-	_status_clock += delta
-	_status.text = "%s%s" % [word, ".".repeat(1 + int(_status_clock * 2.5) % 3)]
-	if _puppet != null:
-		_status.position.y = float(_puppet.get("height")) + 0.2
-	_status.visible = true
 
 
 ## The bus her voice plays on, with a capture to measure it by; made once, kept for the session.
@@ -608,12 +630,24 @@ func _set_anim(state: String) -> void:
 		_puppet.call("play", "idle", true)
 
 
-## A one-off animation from her skin, then standing again. False when her skin has not got it.
+## A one-off animation from her skin, then standing again (or the state she is in, when she is not busy any more).
+## False when her skin has not got it.
 func play_once(clip_name: String) -> bool:
 	if _puppet == null or not bool(_puppet.call("has_clip", clip_name)):
 		return false
+	_one_shot = clip_name
 	_anim_state = ""
-	return bool(_puppet.call("play_then", clip_name, _rest_anim()))
+	if not bool(_puppet.call("play", clip_name, false)):
+		_one_shot = ""
+		return false
+	return true
+
+
+func _on_clip_finished(clip_name: String) -> void:
+	if _one_shot != "" and clip_name == _one_shot:
+		_one_shot = ""
+		_anim_state = ""
+		_refresh_anim()
 
 
 ## The menu she has, like every object: point at her and press Tab, and write.
