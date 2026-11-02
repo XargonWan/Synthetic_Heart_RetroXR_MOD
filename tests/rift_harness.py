@@ -16,7 +16,8 @@ from core.vessel_registry import VESSEL_REGISTRY
 import plugins.rift_vessel.retroxr.retroxr  # registers the connector
 from plugins.rift_vessel.vessel_base import VesselActionResult
 
-vessel_retroxr_api.webui_auth.configured_token = lambda: None
+# WRONGPW=1: the server wants a token the probe does not type, so the rift must be refused.
+vessel_retroxr_api.webui_auth.configured_token = (lambda: "the-real-token") if os.environ.get("WRONGPW") else (lambda: None)
 PORT = 8765
 # PROBE=summoner runs the Summoner OBJECT (needs the autoloads); default is the headless link+body.
 PROBE_ARGS = (["res://mods/xenu.synth_rift/tests/summoner_probe.tscn"] if os.environ.get("PROBE") == "summoner"
@@ -77,6 +78,13 @@ async def main():
     st = asyncio.create_task(server.serve())
     await asyncio.sleep(1.0)
     env = dict(os.environ, XENU_SYNTH_URL=f"127.0.0.1:{PORT}")
+    if os.environ.get("PROBE") == "summoner":
+        # The Summoner probe types the server into the object's menu itself, in a
+        # throw-away data dir so the player's real settings are never touched.
+        import tempfile
+        env.pop("XENU_SYNTH_URL")
+        env["PROBE_SERVER"] = f"127.0.0.1:{PORT}"
+        env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_")
     proc = await asyncio.create_subprocess_exec(
         GODOT, "--headless", "--path", PROJECT,
         *PROBE_ARGS,
@@ -88,7 +96,7 @@ async def main():
             if "[probe]" in t or "[Rift]" in t or "SCRIPT ERROR" in t and "synth_rift" in t:
                 print(t)
     pt = asyncio.create_task(pump())
-    d = asyncio.create_task(drive())
+    d = asyncio.create_task(asyncio.sleep(0) if os.environ.get("WRONGPW") else drive())
     try:
         await asyncio.wait_for(proc.wait(), 120)
     except asyncio.TimeoutError:

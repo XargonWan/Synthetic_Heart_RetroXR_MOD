@@ -11,7 +11,8 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/rift_link.gd` the WebSocket client
 - `scripts/rift_dispatch.gd` one verb: socket -> body -> socket (refuses what is not a verb)
 - `scripts/synth_body.gd` the body (capsule for now; walks in straight lines)
-- `scripts/rift_summoner.gd` the pickable
+- `scripts/rift_summoner.gd` the pickable (its own menu: point + left stick / Tab; server and password live there)
+- `scripts/rift_options_panel.gd`, `rift_options_2d.gd`, `rift_settings.gd` that menu and the file behind it
 - `tests/protocol_tests.gd` run with `godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/protocol_tests.gd`
 - `tests/rift_harness.py` + `tests/e2e_probe.gd` the mod against Synth's real rift socket
 

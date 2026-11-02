@@ -12,12 +12,11 @@ extends XRToolsPickable
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const RiftLink := preload("res://mods/xenu.synth_rift/scripts/rift_link.gd")
 const SynthBody := preload("res://mods/xenu.synth_rift/scripts/synth_body.gd")
+const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
+const RiftOptionsPanel := preload("res://mods/xenu.synth_rift/scripts/rift_options_panel.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
-const MOD_ID := "xenu.synth_rift"
 const MOD_VERSION := "0.1.0"
-const SETTINGS_FILE := "user://mods/xenu.synth_rift/settings.json"
-const DEFAULT_SERVER := "127.0.0.1:8080"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -37,6 +36,11 @@ var _state_clock := 0.0
 var _player_near := false
 var _greet_cooldown := 0.0
 var _on := false
+var _status := "Off"
+var _status_ok := false
+
+## The state line or the lamp changed: the options menu redraws.
+signal status_changed
 
 
 func _ready() -> void:
@@ -52,6 +56,26 @@ func _ready() -> void:
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
 
 
+## The menu every object has: point at it and press the left thumbstick (Tab on a
+## desktop). The server and password are edited here, on the object.
+func toggle_options_ui(camera: Node3D) -> void:
+	RiftOptionsPanel.toggle_for(self, camera)
+
+
+func status_text() -> String:
+	return _status
+
+
+func status_ok() -> bool:
+	return _status_ok
+
+
+func _set_status(text: String, ok: bool) -> void:
+	_status = text
+	_status_ok = ok
+	status_changed.emit()
+
+
 func toggle() -> void:
 	set_on(not _on)
 
@@ -64,13 +88,13 @@ func set_on(on: bool) -> void:
 	if on == _on:
 		return
 	if on:
-		var settings := _settings()
-		var url: String = Protocol.socket_url(str(settings.get("server", DEFAULT_SERVER)),
-			str(settings.get("token", "")))
+		var settings: Dictionary = RiftSettings.load_settings()
+		var url: String = Protocol.socket_url(RiftSettings.server_of(settings), str(settings.get("token", "")))
 		var hello: Dictionary = Protocol.hello(_room_id(), ["motion", "speech"],
 			Protocol.WANTED_ANIMATIONS, MOD_VERSION)
 		_on = true
 		_set_light(LIGHT_WAIT)
+		_set_status("Connecting to %s ..." % RiftSettings.server_of(settings), false)
 		print("[Rift] summoner on (room=%s)" % _room_id())
 		if not _link.open_rift(url, hello):
 			_on = false
@@ -81,6 +105,7 @@ func set_on(on: bool) -> void:
 		_link.close_rift("switched_off")
 		_remove_body()
 		_set_light(LIGHT_OFF)
+		_set_status("Off", false)
 
 
 func _process(delta: float) -> void:
@@ -97,6 +122,7 @@ func _process(delta: float) -> void:
 
 func _on_opened(welcome: Dictionary) -> void:
 	_set_light(LIGHT_ON)
+	_set_status("Open: Synth is in the room", true)
 	_spawn_body()
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
@@ -108,6 +134,28 @@ func _on_closed(reason: String) -> void:
 	_on = false
 	_remove_body()
 	_set_light(LIGHT_OFF)
+	_set_status(_reason_text(reason), false)
+
+
+## What the player is told when the rift shuts, in words rather than codes.
+static func _reason_text(reason: String) -> String:
+	if reason == "switched_off":
+		return "Off"
+	if reason.begins_with("refused:"):
+		var code := reason.substr(8)
+		match code:
+			"busy": return "Refused: a rift is already open"
+			"connect_failed": return "Refused: is the RetroXR Vessel plugin on in Synth?"
+			"protocol": return "Refused: Synth speaks another protocol version"
+		return "Refused by Synth (%s)" % code
+	match reason:
+		"refused": return "Refused: wrong password, or Synth is not reachable"
+		"connect_timeout": return "No answer from the server"
+		"welcome_timeout": return "The server did not welcome us"
+		"server_closed": return "Synth left the room"
+		"no_server": return "Set a server address in this menu"
+		"connect_failed": return "Could not connect"
+	return "Closed (%s)" % reason
 
 
 func _on_action(id: int, action: String, payload: Dictionary) -> void:
@@ -180,18 +228,6 @@ func _check_player() -> void:
 func _room_id() -> String:
 	var scene := get_tree().current_scene
 	return str(scene.name).to_lower() if scene != null else "room"
-
-
-## Settings come from the mod's own store; the environment overrides for probes.
-func _settings() -> Dictionary:
-	var s: Dictionary = JsonStore.read_dict(SETTINGS_FILE, MOD_ID)
-	var server := OS.get_environment("XENU_SYNTH_URL")
-	if not server.is_empty():
-		s["server"] = server
-	var token := OS.get_environment("XENU_SYNTH_TOKEN")
-	if not token.is_empty():
-		s["token"] = token
-	return s
 
 
 func _build_light() -> StandardMaterial3D:
