@@ -57,6 +57,10 @@ func _ready() -> void:
 	var mid := Vector3(0, 1.0, 0)
 	# The pod's front is +Z, so the player stands on that side.
 	await _shoot(out, "1_idle_front", Vector3(1.8, 1.6, 4.2), mid)
+	# The flanks wear the logo, the back the ribs.
+	await _shoot(out, "1b_right_flank", Vector3(3.0, 1.6, 0.4), Vector3(0, 1.4, 0))
+	await _shoot(out, "1c_left_flank", Vector3(-3.0, 1.6, 0.4), Vector3(0, 1.4, 0))
+	await _shoot(out, "1d_back", Vector3(1.2, 1.6, -3.5), Vector3(0, 1.2, 0))
 	# Carried: see-through, with the yellow rectangle where it would be set down.
 	_summoner._signal_held = true   # as if in a hand: the pod's own tick keeps it a ghost
 	var placer: Node = _summoner.get_node("GroundPlacement")

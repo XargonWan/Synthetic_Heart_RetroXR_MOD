@@ -41,12 +41,29 @@ var _fetcher: Node = null
 var _voice: AudioStreamPlayer3D = null
 var _voice_queue: Array = []
 var _voice_heard := 0
+## Her voice has a bus of its own, with a capture on it: how loud she is right now opens her mouth.
+const VOICE_BUS := "SynthVoice"
+var _capture: AudioEffectCapture = null
+var _status: Label3D = null
+var _status_clock := 0.0
 ## Set by the Summoner: (query: String) -> Dictionary of the nearest thing in the room called that
 ## ({name, label, type, systemid, powered, position}), or {}. "player" is handled here.
 var world_lookup: Callable = Callable()
-## Seconds she keeps looking at the player after they last moved or clicked.
-var gaze_hold := 5.0
-var _attention := 0.0
+## Where she is looking: at the player ("player"), at a point she chose ("point"), or nowhere.
+## A glance is short: the player moving or clicking earns ONE (GLANCE_SECONDS), and then she
+## ignores them for GLANCE_COOLDOWN, or she would stare like a security camera. She looks at them
+## for as long as she speaks, and when she arrives; at a thing for as long as she studies it.
+const GLANCE_SECONDS := 2.2
+const GLANCE_COOLDOWN := 10.0
+const ARRIVAL_LOOK_SECONDS := 6.0
+const STUDY_SECONDS := 5.0
+## How many verbs she has been given (the probes wait for the server to finish asking).
+var acts_seen := 0
+var _look_kind := ""
+var _look_point := Vector3.ZERO
+var _look_left := 0.0
+var _glance_cool := 0.0
+var _noticed := false
 ## While she has just chosen where to look, the reflex leaves it alone until then (ticks, ms).
 var _deliberate_until := 0
 var _gaze_clock := 0.0
@@ -135,8 +152,29 @@ func _ready() -> void:
 	_voice.unit_size = 3.0
 	_voice.max_distance = 20.0
 	_voice.position = Vector3(0, 1.55, 0)
+	_capture = _voice_capture()
+	if _capture != null:
+		_voice.bus = VOICE_BUS
 	add_child(_voice)
 	_voice.finished.connect(_next_voice)
+
+	# What she is doing in her head, where the player can see it (the WebUI shows the same).
+	_status = Label3D.new()
+	_status.name = "Status"
+	_status.pixel_size = 0.0016
+	_status.font_size = 40
+	_status.outline_size = 8
+	_status.modulate = Color(0.43, 1.0, 1.0)
+	_status.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_status.no_depth_test = true
+	_status.visible = false
+	_status.position = Vector3(0, 1.95, 0)
+	add_child(_status)
+
+
+func _process(delta: float) -> void:
+	_update_status(delta)
+	_lip_sync()
 
 
 func _physics_process(delta: float) -> void:
@@ -188,40 +226,72 @@ func _physics_process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	# A click is the player doing something: she notices (the WebUI avatar's eyes do the same).
+	# A click is the player doing something: she may notice (the WebUI avatar's eyes do the same).
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
-		_attention = gaze_hold
+		_noticed = true
 
 
-## The reflex: when the player moves or clicks and she is doing nothing else, she looks at them for a
-## while. Never while she walks (she looks where she goes), never right after she chose where to look,
-## and always while she is speaking or being written to.
+## Look at the player for `seconds` (never shortens a look she is already in).
+func attend_player(seconds: float) -> void:
+	if _look_kind == "point" and _look_left > 0.0:
+		return
+	_look_kind = "player"
+	_look_left = maxf(_look_left, seconds)
+
+
+## Look at a point in the world she chose, for `seconds`.
+func study_point(point: Vector3, seconds: float = STUDY_SECONDS) -> void:
+	_look_kind = "point"
+	_look_point = point
+	_look_left = seconds
+
+
+## The reflex: when the player moves or clicks and she is doing nothing else, she glances at them for a
+## moment, then relaxes, and does not look again for a while however much they move. Never while she
+## walks (she looks where she goes), never right after she chose where to look; and she looks at them
+## for as long as she is speaking.
 func _update_gaze(delta: float) -> void:
 	if _puppet == null:
 		return
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
+	_glance_cool = maxf(_glance_cool - delta, 0.0)
 	_gaze_clock += delta
 	if _gaze_clock >= 0.2:
 		var moved := cam.global_position.distance_to(_gaze_cam_pos) > GAZE_MOVE_M
 		var turned := rad_to_deg(_gaze_cam_fwd.angle_to(-cam.global_basis.z)) > GAZE_TURN_DEG if _gaze_cam_fwd != Vector3.ZERO else false
-		if moved or turned:
-			_attention = gaze_hold
+		if (moved or turned) and _gaze_cam_pos != Vector3.ZERO:
+			_noticed = true
 		_gaze_cam_pos = cam.global_position
 		_gaze_cam_fwd = -cam.global_basis.z
 		_gaze_clock = 0.0
-	if _voice != null and _voice.playing:
-		_attention = maxf(_attention, 2.0)
-	if get_node_or_null("ChatPanel") != null and (get_node("ChatPanel") as Node3D).visible:
-		_attention = maxf(_attention, 2.0)
-	_attention = maxf(_attention - delta, 0.0)
 	var busy := _goal != null or Time.get_ticks_msec() < _deliberate_until
-	_puppet.call("set_gaze", (cam.global_position + Vector3(0, -0.05, 0)) if _attention > 0.0 and not busy else null)
+	if _noticed:
+		_noticed = false
+		if not busy and _look_left <= 0.0 and _glance_cool <= 0.0:
+			attend_player(GLANCE_SECONDS)
+			_glance_cool = GLANCE_COOLDOWN
+	# Speaking to someone, she looks at them.
+	if (_voice != null and _voice.playing) or _bubble_left > 0.0:
+		attend_player(0.5)
+	_look_left = maxf(_look_left - delta, 0.0)
+	var target: Variant = null
+	if _look_left > 0.0:
+		if _look_kind == "point":
+			target = _look_point
+		elif _goal == null:
+			target = cam.global_position + Vector3(0, -0.05, 0)
+	_puppet.call("set_gaze", target)
 
 
 func is_gazing() -> bool:
 	return _puppet != null and float(_puppet.call("gaze_weight")) > 0.5
+
+
+## What she is looking at right now: "player", "point" or "" (the tests read it).
+func gaze_kind() -> String:
+	return _look_kind if _look_left > 0.0 and is_gazing() else ""
 
 
 ## While she was asked to follow: keep to FOLLOW_DISTANCE of the player (inside her leash).
@@ -307,6 +377,8 @@ func is_ethereal() -> bool:
 ## She becomes solid and opaque, over `seconds`: the moment she is really in the room.
 func materialise(seconds: float) -> void:
 	_ethereal = false
+	# She has just stepped out and there is someone in front of her: she looks at them.
+	attend_player(ARRIVAL_LOOK_SECONDS)
 	var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_method(_set_fade, ETHEREAL_FADE, 0.0, seconds)
 	await tw.finished
@@ -354,6 +426,23 @@ func attach_puppet(puppet: Node3D) -> void:
 	print("[Rift] Synth's own body is on (%.2f m)" % float(puppet.get("height")))
 
 
+## Another skin: the new body takes her place where she stands, in what she was doing.
+func swap_puppet(puppet: Node3D) -> void:
+	var old := _puppet
+	_puppet = null
+	_anim_state = ""
+	if puppet.get_parent() != null:
+		puppet.reparent(self, false)
+	else:
+		add_child(puppet)
+	puppet.position = Vector3.ZERO
+	puppet.rotation = Vector3.ZERO
+	puppet.visible = true
+	if old != null and is_instance_valid(old):
+		old.queue_free()
+	attach_puppet(puppet)
+
+
 func has_puppet() -> bool:
 	return _puppet != null
 
@@ -362,6 +451,7 @@ func has_puppet() -> bool:
 ## name if her skin has it, else standing. A state that is not one of her clips changes nothing.
 func set_karada_state(state: String) -> void:
 	_karada_state = state if not state.is_empty() else "idle"
+	_status_clock = 0.0
 	# Walking wins while she walks; _end_walk puts the state back.
 	if _goal == null and _puppet != null:
 		_anim_state = ""
@@ -384,10 +474,87 @@ func on_karada(kind: String, payload: Dictionary) -> void:
 	match kind:
 		"animation":
 			set_karada_state(str(payload.get("state", "idle")))
+			# The clip's own expressions (think shuts her eyes from a frame on).
+			var descriptor: Variant = payload.get("descriptor", {})
+			_face_call("set_descriptor", descriptor if descriptor is Dictionary else {})
 		"audio":
 			_hear(payload)
+		"face":
+			if not (payload.get("values", {}) as Dictionary).is_empty():
+				print("[Rift] Karada face: %s" % str(payload.get("values", {})))
+			_face_call("set_face_values", payload.get("values", {}) if payload.get("values") is Dictionary else {})
+		"expression":
+			if str(payload.get("type", "")) != "vrm_expression_clear":
+				print("[Rift] Karada expression: %s" % str(payload))
+			if str(payload.get("type", "")) == "vrm_expression_clear":
+				_face_call("set_overlay", null)
+			else:
+				_face_call("set_overlay", payload.get("targets", null))
 		_:
-			pass  # the face, the model and the expressions are not drawn yet
+			pass  # the model is the Summoner's: it fetches the new body
+
+
+## Call something on her face, if she has one.
+func _face_call(method: String, arg: Variant) -> void:
+	if _puppet != null and _puppet.get("face") != null:
+		(_puppet.get("face") as RefCounted).call(method, arg)
+
+
+## The persona's blendshape map and the rest of her face come with the model: hand them over.
+func face_of() -> RefCounted:
+	return _puppet.get("face") if _puppet != null else null
+
+
+## "thinking ..." / "writing ..." over her head while Karada says so, the dots counting.
+func _update_status(delta: float) -> void:
+	var word := ""
+	if _karada_state == "think":
+		word = "thinking"
+	elif _karada_state == "write":
+		word = "writing"
+	if word.is_empty() or _status == null:
+		if _status != null and _status.visible:
+			_status.visible = false
+		return
+	_status_clock += delta
+	_status.text = "%s%s" % [word, ".".repeat(1 + int(_status_clock * 2.5) % 3)]
+	if _puppet != null:
+		_status.position.y = float(_puppet.get("height")) + 0.2
+	_status.visible = true
+
+
+## The bus her voice plays on, with a capture to measure it by; made once, kept for the session.
+func _voice_capture() -> AudioEffectCapture:
+	var bus := AudioServer.get_bus_index(VOICE_BUS)
+	if bus < 0:
+		AudioServer.add_bus()
+		bus = AudioServer.bus_count - 1
+		AudioServer.set_bus_name(bus, VOICE_BUS)
+		AudioServer.set_bus_send(bus, "Master")
+	for i in AudioServer.get_bus_effect_count(bus):
+		if AudioServer.get_bus_effect(bus, i) is AudioEffectCapture:
+			return AudioServer.get_bus_effect(bus, i) as AudioEffectCapture
+	var capture := AudioEffectCapture.new()
+	capture.buffer_length = 0.25
+	AudioServer.add_bus_effect(bus, capture)
+	return capture
+
+
+## Her mouth follows how loud she is: the RMS of what her voice just played, as the WebUI measures it.
+func _lip_sync() -> void:
+	var face := face_of()
+	if face == null:
+		return
+	var level := 0.0
+	if _capture != null:
+		var frames := _capture.get_frames_available()
+		if frames > 0:
+			var buffer := _capture.get_buffer(frames)
+			var sum := 0.0
+			for f in buffer:
+				sum += (f.x * f.x + f.y * f.y) * 0.5
+			level = sqrt(sum / float(buffer.size()))
+	face.call("speak_level", level if _voice != null and _voice.playing else 0.0)
 
 
 func set_fetcher(fetcher: Node) -> void:
@@ -482,10 +649,11 @@ func say_bubble(text: String) -> void:
 
 ## Answer a verb. Always returns {ok, detail, data}; never throws.
 func act(action: String, payload: Dictionary) -> Dictionary:
+	acts_seen += 1
 	if action in ["look", "look_at", "inspect", "emote", "move"]:
 		# She chose where to look or what to do: the reflex stays out of it for a while.
 		_deliberate_until = Time.get_ticks_msec() + DELIBERATE_MS
-		_attention = 0.0
+		_look_left = 0.0
 	match action:
 		"say":
 			var text := str(payload.get("text", "")).strip_edges()
@@ -544,11 +712,20 @@ func _face_point(p: Vector3) -> void:
 		rotation.y = atan2(-flat.x, -flat.z)
 
 
+## Her head goes to what she is studying; the player looks at themselves.
+func _study(hit: Dictionary) -> void:
+	if str(hit.get("type", "")) == "player":
+		attend_player(STUDY_SECONDS)
+		return
+	study_point(hit["position"])
+
+
 func _look_at(payload: Dictionary) -> Dictionary:
 	var hit := _resolve(payload)
 	if hit.is_empty():
 		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
 	_face_point(hit["position"])
+	_study(hit)
 	return {"ok": true, "detail": "looking at %s" % str(hit.get("label", "it"))}
 
 
@@ -559,6 +736,7 @@ func _inspect(payload: Dictionary) -> Dictionary:
 		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
 	var pos: Vector3 = hit["position"]
 	_face_point(pos)
+	_study(hit)
 	var bearing := SummonerView.bearing_deg(global_position, -global_basis.z, pos)
 	var dist := Vector2(pos.x - global_position.x, pos.z - global_position.z).length()
 	var bits: PackedStringArray = []
@@ -584,6 +762,7 @@ func _look(payload: Dictionary) -> Dictionary:
 		var flat := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
 		if flat.length() > 0.01:
 			rotation.y = atan2(-flat.x, -flat.z)
+			study_point(p)
 			return {"ok": true}
 	if payload.has("yaw"):
 		rotation.y = deg_to_rad(float(payload["yaw"]))
@@ -593,6 +772,7 @@ func _look(payload: Dictionary) -> Dictionary:
 		if cam != null:
 			var f := cam.global_position - global_position
 			rotation.y = atan2(-f.x, -f.z)
+			attend_player(STUDY_SECONDS)
 			return {"ok": true}
 	return {"ok": false, "detail": "no_target"}
 

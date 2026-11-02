@@ -14,10 +14,14 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/summoner_model.gd` the pod (built in code, 2.2 m, the screen 12 x 7 cm at chest height)
 - `scripts/summoner_sounds.gd` the teleport sounds, synthesised; `tests/sound_tests.gd -- --write=DIR` writes them as wav
 - `scripts/summoner_view.gd` what Synth sees when she steps out (bearing, distance, side)
+- `scripts/vrm_face.gd` her face: the WebUI's FacialDriver (blink, emotion layers, mouth from her voice's loudness)
+- `scripts/karada_puppet.gd` her VRM + Mixamo clips retargeted by hand, her gaze
+- `assets/` the Synth logo (no text) for the pod's flanks, and its glow map
 - `scripts/rift_summoner.gd` the pickable and the summoning sequence (its own menu: point + left stick / Tab; server and password live there)
 - `scripts/rift_options_panel.gd`, `rift_options_2d.gd`, `rift_settings.gd` that menu and the file behind it
 - `tests/protocol_tests.gd` run with `godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/protocol_tests.gd`
 - `tests/rift_harness.py` + `tests/e2e_probe.gd` the mod against Synth's real rift socket
 
-Phase 0 is done: socket, handshake, say, walk, look, status, refusal of anything that is not a
-verb. Not built: VRM body and animations, objects, screens, touch, voice, chat input.
+Built: socket, handshake, her own body from the Karada skin, voice and lip movement, blink and
+face, a chat page, looking at things, walking to them, sightings of what changes in the room.
+Not built: picking up objects, screens, touch.

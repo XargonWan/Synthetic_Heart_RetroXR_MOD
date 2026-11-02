@@ -40,6 +40,15 @@ var _saw_idle_again := false
 var _gaze_checked := false
 var _was_ethereal := false
 var _done := false
+var _said := {}
+var _first_puppet := 0
+var _saw_mouth := false
+var _saw_status := false
+var _saw_joy := false
+var _saw_swap := false
+var _blinks := 0
+var _was_blinking := false
+var _arrival_gaze := false
 
 
 func _ready() -> void:
@@ -275,6 +284,7 @@ func _process(delta: float) -> void:
 		_saw_body = true
 		print("[probe] body appeared at %s" % str(body.global_position))
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
+		_put_down_a_vase.call_deferred()
 		# The floor is at y = 0 and the capsule's centre at 0.3: she stands on the floor, not on the capsule.
 		_check(absf(body.global_position.y) < 0.05, "she stands on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
 	# Karada drives her: think while the avatar thinks, her voice from her head, idle again after.
@@ -283,6 +293,22 @@ func _process(delta: float) -> void:
 			_saw_think = true
 		if body.voices_played() >= 1:
 			_saw_voice = true
+		if _first_puppet == 0:
+			_first_puppet = body._puppet.get_instance_id()
+		elif body._puppet.get_instance_id() != _first_puppet:
+			_saw_swap = true
+		var face: RefCounted = body.face_of()
+		if face != null:
+			if face.mouth_open() > 0.1:
+				_saw_mouth = true
+			if float(face.applied.get("joy", 0.0)) > 0.5:
+				_saw_joy = true
+			var blinking: bool = float(face.applied.get("blink", 0.0)) > 0.5
+			if blinking and not _was_blinking:
+				_blinks += 1
+			_was_blinking = blinking
+		if body.karada_state() == "think" and body._status.visible and body._status.text.begins_with("thinking"):
+			_saw_status = true
 		if _saw_think and body.karada_state() == "idle" and body._puppet.playing() == "idle":
 			_saw_idle_again = true
 	# What Synth says lands in the chat log (the harness makes her say a line once she is out).
@@ -311,6 +337,7 @@ func _process(delta: float) -> void:
 		_check(_summoner.phase() == 3, "it is OPEN")
 		_check(_was_ethereal, "she was intangible on the way out")
 		_check(not body.is_ethereal() and body.collision_layer == 1, "and is solid now she is out")
+		_check(body.gaze_kind() == "player" or body._look_kind == "player" and body._look_left > 0.0, "she looks at the player as she arrives")
 		_check(_summoner.global_position.distance_to(_pod_at) < 0.05, "the pod never moved (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
 		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to her (%s)" % _menu_ui._status.text)
 		_chat_roundtrip(body)
@@ -364,6 +391,11 @@ func _process(delta: float) -> void:
 		_check(_saw_synth_line, "what Synth said reached the chat log")
 		_check(_saw_think, "her body played the think clip when Karada said think")
 		_check(_saw_voice, "her voice (a WAV from the server) was played from her head")
+		_check(_saw_mouth, "her mouth opened while she spoke")
+		_check(_saw_status, "'thinking' showed over her head while Karada said think")
+		_check(_saw_joy, "an emotion Karada sent showed on her face")
+		_check(_saw_swap, "a change of skin put her in a new body")
+		_check(_blinks >= 1, "she blinked by herself (%d)" % _blinks)
 		_check(_saw_idle_again, "and she went back to idle when Karada did")
 		_check(_menu_ui._status.text == "Synth left the room", "the menu says why it closed (got '%s')" % _menu_ui._status.text)
 		_check(_phases.slice(0, 5) == [1, 2, 3, 0], "the phases went CHARGING, ARRIVING, OPEN, IDLE (%s)" % str(_phases))
@@ -416,37 +448,41 @@ func _chat_roundtrip(body: Node3D) -> void:
 	_check(ui._edit.text == "", "the field is emptied")
 
 
-## She looks at the player when they move and she is doing nothing else, for a while, then stops; never
-## right after she chose where to look herself.
+## The reflex is a GLANCE: the player moves, she looks at them for a moment, then relaxes, and does not
+## look again for a while whatever they do; she never drops what she chose to look at.
 func _gaze_roundtrip(body: Node3D) -> void:
 	if _gaze_checked:
 		return
 	_gaze_checked = true
-	body.gaze_hold = 1.2
 	# Let her finish whatever she was asked to do (the server is still sending commands), then be still.
 	for i in 600:
 		await get_tree().create_timer(0.1).timeout
 		if not is_instance_valid(body):
 			return
-		if body._goal == null and Time.get_ticks_msec() > body._deliberate_until + 500:
+		if body._goal == null and Time.get_ticks_msec() > body._deliberate_until + 500 and body._look_left <= 0.0 and body._bubble_left <= 0.0 and _saw_swap and body.acts_seen >= 10:
 			break
-	# The chat page was left open by the earlier check; with it open she keeps looking at whoever writes.
 	var panel := body.get_node_or_null("ChatPanel") as Node3D
 	if panel != null and panel.visible:
 		panel.hide_panel()
+	body._glance_cool = 0.0
 	await get_tree().create_timer(2.5).timeout
 	_check(not body.is_gazing(), "she is not staring at a player who is standing still")
 	_camera.global_position += Vector3(0.6, 0, 0)       # the player steps sideways
 	await get_tree().create_timer(0.9).timeout
-	_check(body.is_gazing(), "the player moved: she looks at them")
-	# It is released a little after they stop (she holds it 1.2 s here, and eases out in 0.3).
-	await get_tree().create_timer(2.4).timeout
-	_check(not body.is_gazing(), "and stops looking once they have been still a while")
-	# She decides to look at something else: the reflex stays out of it.
-	body.act("look_at", {"target": "Crate"})
+	_check(body.gaze_kind() == "player", "the player moved: she glances at them")
+	# A glance is short (2.2 s, then it eases out in 0.3).
+	await get_tree().create_timer(2.6).timeout
+	_check(not body.is_gazing(), "and relaxes by herself, though the player has not stopped moving")
+	# ...and a player who keeps moving does not draw another one for a good while.
 	_camera.global_position += Vector3(-0.6, 0, 0)
+	await get_tree().create_timer(1.0).timeout
+	_check(not body.is_gazing(), "a player who keeps moving does not make her stare (the cooldown)")
+	# She decides to look at something: the reflex stays out of it, and her head goes to it.
+	body._glance_cool = 0.0
+	body.act("look_at", {"target": "Crate"})
+	_camera.global_position += Vector3(0.6, 0, 0)
 	await get_tree().create_timer(0.9).timeout
-	_check(not body.is_gazing(), "a player moving does not pull her gaze off what she chose to look at (attention %.2f, weight %.2f, deliberate %d ms left)" % [body._attention, float(body._puppet.call("gaze_weight")), body._deliberate_until - Time.get_ticks_msec()])
+	_check(body.gaze_kind() == "point", "what she chose to look at gets her head, and the player moving does not pull it away (%s)" % body.gaze_kind())
 
 
 func _finish(what: String) -> void:
@@ -455,7 +491,21 @@ func _finish(what: String) -> void:
 	get_tree().quit(1 if _failed > 0 else 0)
 
 
+## Something put down in the room while she is out: she is told (the harness checks the event).
+func _put_down_a_vase() -> void:
+	await get_tree().create_timer(3.0).timeout
+	var vase := Node3D.new()
+	vase.name = "Vase"
+	vase.position = Vector3(-0.9, 0.2, 2.2)
+	vase.add_to_group("spawned")
+	add_child(vase)
+
+
 func _check(ok: bool, what: String) -> void:
-	if not ok:
+	if ok:
+		if not _said.has(what):
+			_said[what] = true
+			print("[probe] ok: %s" % what)
+	else:
 		_failed += 1
 		print("[probe] FAIL: %s" % what)

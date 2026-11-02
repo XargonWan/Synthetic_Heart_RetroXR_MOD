@@ -119,6 +119,12 @@ async def _drive():
             "type": "tts-play", "url": "/media/hello.wav", "audio_duration_s": 1.0, "text": "Ciao dal server"}})
         await asyncio.sleep(2.5)
         await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "idle"}})
+        # Her face (an emotion, by the logical name the persona maps), then a change of skin (the same one,
+        # which is enough to see her body replaced).
+        await conn.send_frame({"type": "karada", "kind": "face", "payload": {"type": "vrm_face", "values": {"mouth_smile": 0.7}}})
+        await asyncio.sleep(1.0)
+        await conn.send_frame({"type": "karada", "kind": "model", "payload": {"type": "vrm_model", "name": "Rei", "url": "/skins/Rei/model.vrm"}})
+        await asyncio.sleep(4.0)
         # The probe types a line to her through the chat page: it must arrive as a player's chat.
         for _ in range(100):
             if any(e.event_type == "chat" for e in EVENTS):
@@ -166,6 +172,13 @@ async def _drive():
     show("press_button RAW to the mod", await asyncio.wait_for(fut, 5))
     show("state frame seen", VesselActionResult(ok=bool(conn._state), data=conn._state))
     if os.environ.get("PROBE") == "summoner":
+        for _ in range(80):
+            if any(e.event_type == "sighting" and "Vase" in e.summary for e in EVENTS):
+                break
+            await asyncio.sleep(0.1)
+        sights = [e for e in EVENTS if e.event_type == "sighting"]
+        ok = any("Vase" in e.summary and "appeared" in e.summary for e in sights)
+        print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} sighting: a thing put down in the room is told to her ({[e.summary for e in sights]!r})")
         await asyncio.sleep(30)   # the probe looks at how she behaves when nobody is asking her anything
     await FakePlugin().disconnect_world("retroxr")
 

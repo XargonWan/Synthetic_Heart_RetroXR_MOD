@@ -3,9 +3,11 @@
 [ext_resource type="Script" path="res://mods/xenu.synth_rift/scripts/rift_summoner.gd" id="1_summoner"]
 [ext_resource type="Script" path="res://Scripts/Objects/highlights/pickable_highlight.gd" id="2_highlight"]
 
+; The body stops at the wall (R_OUT 0.455): the screen is bolted OUTSIDE it, and a collider
+; wider than the wall hid the screen from every ray (the crosshair met the pod first).
 [sub_resource type="CylinderShape3D" id="Shape_body"]
 height = 2.21
-radius = 0.585
+radius = 0.45
 
 [sub_resource type="CylinderShape3D" id="Shape_pointer"]
 height = 2.21

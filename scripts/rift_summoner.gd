@@ -39,8 +39,11 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.6.0"
+const MOD_VERSION := "0.7.0"
 const STATE_INTERVAL := 1.0
+## At most this many changes in the room are told per look, and how much they matter to her.
+const MAX_SIGHTINGS := 3
+const SIGHTING_SALIENCE := 0.45
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
 const MAX_ENTITIES := 20
@@ -107,6 +110,10 @@ var _signal_held := false
 var _assets_state := ""
 var _fetcher: Node = null
 var _karada_state := "idle"
+var _skin_loading := false
+var _room_memory: Dictionary = {}
+var _room_seen := false
+var _skin_again: Dictionary = {}
 var _puppet: Node3D = null
 
 ## The state line or the lamp changed: the options menu redraws.
@@ -371,6 +378,7 @@ func _process(delta: float) -> void:
 		_state_clock = 0.0
 		_link.send_frame(_state_frame())
 		_check_player()
+		_watch_room()
 
 
 func _animate_charge() -> void:
@@ -433,8 +441,39 @@ func _arrive() -> void:
 func _on_karada(kind: String, payload: Dictionary) -> void:
 	if kind == "animation":
 		_karada_state = str(payload.get("state", "idle"))
+	if kind == "model":
+		_change_skin(payload)
+		return
 	if _body != null and is_instance_valid(_body):
 		_body.on_karada(kind, payload)
+
+
+## The player changed her skin (the WebUI's model picker): fetch the new body and put her in it.
+## The server's description of the body is asked for again, so her clips come from the new skin too.
+func _change_skin(payload: Dictionary) -> void:
+	if _phase != Phase.OPEN or _body == null or not is_instance_valid(_body) or _fetcher == null:
+		print("[Rift] the skin changed (%s) while she is not out: it is fetched at the next summon" % str(payload.get("name", "")))
+		return
+	if _skin_loading:
+		_skin_again = payload
+		return
+	_skin_loading = true
+	print("[Rift] her skin changed to %s: fetching it" % str(payload.get("name", payload.get("url", ""))))
+	_link.send_frame(Protocol.request_assets(Protocol.WANTED_ANIMATIONS))
+	var assets: Dictionary = await _link.assets_received
+	var fetcher := _fetcher
+	var puppet: Node3D = await _build_puppet(assets, fetcher, func() -> bool:
+		return _phase == Phase.OPEN and _body != null and is_instance_valid(_body))
+	_skin_loading = false
+	if puppet != null and _phase == Phase.OPEN and _body != null and is_instance_valid(_body):
+		_body.swap_puppet(puppet)
+		print("[Rift] she wears her new skin")
+	elif puppet != null:
+		puppet.queue_free()
+	if not _skin_again.is_empty():
+		var next := _skin_again
+		_skin_again = {}
+		_change_skin(next)
 
 
 ## The player wrote to her through the chat page.
@@ -454,6 +493,11 @@ func _still_arriving() -> bool:
 ## goes first so the world state her turn is built from already has the room in it.
 func _tell_synth_she_was_summoned() -> void:
 	var placed := _placed_entities()
+	# What she saw on arrival is the baseline: only what changes from here is news.
+	_room_memory.clear()
+	_room_seen = false
+	SummonerView.room_changes(_room_memory, placed, true)
+	_room_seen = true
 	_link.send_frame(Protocol.state(_body.global_position, "", {"entities": _json_entities(placed)}))
 	var text := SummonerView.summoned_text(_room_id(), placed)
 	print("[Rift] telling Synth: %s" % text)
@@ -555,24 +599,46 @@ func _on_action(id: int, action: String, payload: Dictionary) -> void:
 ## pod charges, and build the puppet. The capsule stays her body if any of it fails.
 func _load_body(assets: Dictionary) -> void:
 	_assets_state = "loading"
+	_set_status("Rift open: loading Synth's body ...", false)
+	var fetcher := _fetcher
+	var puppet: Node3D = await _build_puppet(assets, fetcher, func() -> bool: return _loading_still_wanted(fetcher))
+	if puppet == null:
+		if _assets_state == "loading":
+			_assets_state = "failed"
+		return
+	_puppet = puppet
+	_assets_state = "ready"
+	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str((assets.get("animations", {}) as Dictionary).keys())])
+	_set_status("Rift open: charging ...", false)
+
+
+## Her body from what the server described (`assets`): the model, her persona's face map and every
+## clip it named. null when it could not be built or `still_wanted` said to stop.
+func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) -> Node3D:
 	var model: Dictionary = assets.get("model", {}) if assets.get("model") is Dictionary else {}
 	var model_url := str(model.get("url", ""))
-	if model_url.is_empty() or _fetcher == null:
+	if model_url.is_empty() or fetcher == null:
 		print("[Rift] the server named no model for her: capsule")
-		_assets_state = "failed"
-		return
-	var fetcher := _fetcher
-	_set_status("Rift open: loading Synth's body ...", false)
+		return null
 	var vrm: PackedByteArray = await fetcher.call("get_bytes", model_url)
-	if not _loading_still_wanted(fetcher):
-		return
+	if not bool(still_wanted.call()):
+		return null
 	var puppet: Node3D = KaradaPuppet.new()
 	puppet.visible = false
 	add_child(puppet)
 	if vrm.is_empty() or not bool(puppet.call("load_model", vrm)):
 		puppet.queue_free()
-		_assets_state = "failed"
-		return
+		return null
+	# Which expression each logical face name is: her skin's persona, next to the model.
+	var persona_bytes: PackedByteArray = await fetcher.call("get_fresh", model_url.get_base_dir() + "/persona.json")
+	if not bool(still_wanted.call()):
+		puppet.queue_free()
+		return null
+	var persona: Variant = JSON.parse_string(persona_bytes.get_string_from_utf8()) if not persona_bytes.is_empty() else null
+	if persona is Dictionary:
+		puppet.call("set_persona", persona)
+	else:
+		print("[Rift] her persona.json did not come: her face takes names as they are")
 	var anims: Dictionary = assets.get("animations", {}) if assets.get("animations") is Dictionary else {}
 	for clip_name: String in anims:
 		var entry: Variant = anims[clip_name]
@@ -581,8 +647,9 @@ func _load_body(assets: Dictionary) -> void:
 		var names: Array = []
 		for i in urls.size():
 			var bytes: PackedByteArray = await fetcher.call("get_bytes", urls[i])
-			if not _loading_still_wanted(fetcher, puppet):
-				return
+			if not bool(still_wanted.call()):
+				puppet.queue_free()
+				return null
 			var variant := "%s__%d" % [clip_name, i]
 			if not bytes.is_empty() and bool(puppet.call("add_clip", variant, bytes)):
 				names.append(variant)
@@ -595,10 +662,7 @@ func _load_body(assets: Dictionary) -> void:
 			await puppet.call("choose_most_upright", clip_name, names)
 		else:
 			puppet.call("alias_clip", clip_name, names[0])
-	_puppet = puppet
-	_assets_state = "ready"
-	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str(anims.keys())])
-	_set_status("Rift open: charging ...", false)
+	return puppet
 
 
 ## The clips that ARE `state`: the files directly in its folder (`animations/idle/Idle.fbx`), not the
@@ -764,6 +828,17 @@ func _json_entities(placed: Array) -> Array:
 
 func _state_frame() -> Dictionary:
 	return Protocol.state(_body.global_position, "", {"entities": _json_entities(_placed_entities())})
+
+
+## She notices what changes around her: a thing put down or taken away, a machine switched on or off. Told as
+## quiet sightings (they are what she may get curious about, never a reason to interrupt anyone).
+func _watch_room() -> void:
+	var first := _room_memory.is_empty() and not _room_seen
+	_room_seen = true
+	var said: Array = SummonerView.room_changes(_room_memory, _placed_entities(), first)
+	for line: Variant in said.slice(0, MAX_SIGHTINGS):
+		print("[Rift] sighting: %s" % str(line))
+		_link.send_frame(Protocol.event("sighting", str(line), "", SIGHTING_SALIENCE))
 
 
 func _check_player() -> void:

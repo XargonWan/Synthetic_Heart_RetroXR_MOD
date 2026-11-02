@@ -95,3 +95,36 @@ static func _label(e: Dictionary) -> String:
 	var label := str(e.get("label", e.get("name", "something")))
 	var sid := str(e.get("systemid", ""))
 	return "%s (%s)" % [label, sid] if not sid.is_empty() else label
+
+
+## What changed in the room since the last look, in words: something new in view, something gone, a machine switched
+## on or off. `memory` ({name: {label, powered}}) is what she saw last time and is brought up to date; the first
+## call only remembers (nothing is "new" to someone who has just arrived). The player is not part of it.
+static func room_changes(memory: Dictionary, placed: Array, first_look: bool = false) -> Array:
+	var said: Array = []
+	var now: Dictionary = {}
+	for e: Dictionary in placed:
+		if str(e.get("type", "")) == "player":
+			continue
+		var key := str(e.get("name", ""))
+		now[key] = e
+		var label := str(e.get("label", key))
+		if not memory.has(key):
+			if not first_look:
+				said.append("%s has appeared %s, %.1f m away." % [_with_article(label), str(e.get("side", "nearby")), float(e.get("distance", 0.0))])
+		elif e.has("powered") and memory[key].has("powered") and bool(e["powered"]) != bool(memory[key]["powered"]):
+			said.append("The %s was switched %s." % [label, "on" if bool(e["powered"]) else "off"])
+	for key: String in memory.keys():
+		if not now.has(key) and not first_look:
+			said.append("The %s is no longer there." % str(memory[key].get("label", key)))
+	memory.clear()
+	for key: String in now:
+		var e: Dictionary = now[key]
+		memory[key] = {"label": str(e.get("label", key)), "powered": e.get("powered", null)}
+		if not e.has("powered"):
+			memory[key].erase("powered")
+	return said
+
+
+static func _with_article(label: String) -> String:
+	return "The %s" % label

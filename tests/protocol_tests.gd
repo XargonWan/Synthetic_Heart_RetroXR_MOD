@@ -7,6 +7,7 @@
 extends SceneTree
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
+const View := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 
 var _failed := 0
 var _count := 0
@@ -19,6 +20,7 @@ func _init() -> void:
 	_points()
 	_tls()
 	_http()
+	_room()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
@@ -123,3 +125,23 @@ func _http() -> void:
 	_eq(Protocol.encode_path("/skins/Rei/animations/greet/Standing Greeting.fbx"),
 		"/skins/Rei/animations/greet/Standing%20Greeting.fbx", "spaces are encoded, slashes are not")
 	_eq(Protocol.encode_path("/skins/Rei/model.vrm"), "/skins/Rei/model.vrm", "a plain path is untouched")
+
+
+func _room() -> void:
+	var tv := {"name": "TV", "label": "CRT television", "type": "Node3D", "powered": false, "side": "to your left", "distance": 2.0}
+	var mem := {}
+	_check(View.room_changes(mem, [tv], true).is_empty(), "the first look only remembers")
+	_check(View.room_changes(mem, [tv]).is_empty(), "nothing changed, nothing to tell")
+	var tv_on := tv.duplicate()
+	tv_on["powered"] = true
+	var said := View.room_changes(mem, [tv_on])
+	_check(said.size() == 1 and str(said[0]).contains("switched on") and str(said[0]).contains("CRT television"), "a machine switched on is noticed (%s)" % str(said))
+	var cart := {"name": "Cart", "label": "Zelda cartridge", "type": "Node3D", "side": "ahead", "distance": 1.2}
+	said = View.room_changes(mem, [tv_on, cart])
+	_check(said.size() == 1 and str(said[0]).contains("Zelda cartridge") and str(said[0]).contains("appeared") and str(said[0]).contains("1.2 m"), "something put down is noticed, and where (%s)" % str(said))
+	said = View.room_changes(mem, [tv_on])
+	_check(said.size() == 1 and str(said[0]).contains("no longer there"), "something taken away is noticed (%s)" % str(said))
+	var player := {"name": "player", "label": "the player", "type": "player", "side": "ahead", "distance": 2.0}
+	_check(View.room_changes(mem, [tv_on, player]).is_empty(), "the player is not an object")
+	said = View.room_changes(mem, [tv_on, player])
+	_check(said.is_empty(), "and what is unchanged stays quiet")

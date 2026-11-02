@@ -107,6 +107,7 @@ func _initialize() -> void:
 		puppet._retarget()
 		puppet._apply_gaze(0.1)
 	_check(puppet.gaze_weight() < 0.01, "and it lets go (%.3f)" % puppet.gaze_weight())
+	_face_cases(puppet, skin)
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	quit(1 if _failed > 0 or _count == 0 else 0)
 
@@ -116,3 +117,79 @@ func _check(ok: bool, what: String) -> void:
 	if not ok:
 		_failed += 1
 		print("[rift-tests] FAIL: %s" % what)
+
+
+## Her face is what the WebUI avatar's is: the model's own expressions, layered, with a blink of her own.
+func _face_cases(puppet: Node3D, skin: String) -> void:
+	var face: RefCounted = puppet.face
+	_check(face != null and face.expression_names().size() >= 10, "the model's expressions were read (%d)" % (face.expression_names().size() if face != null else 0))
+	for n: String in ["blink", "joy", "a", "sorrow"]:
+		_check(face.has_expression(n), "VRM 0.x preset '%s' is there" % n)
+	# The VRM 1.0 names the persona map uses reach the 0.x presets.
+	for pair: Array in [["happy", "joy"], ["aa", "a"], ["sad", "sorrow"], ["blink", "blink"]]:
+		_check(face.has_expression(pair[0]), "'%s' is understood" % pair[0])
+	var persona: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(skin + "/persona.json"))
+	puppet.set_persona(persona)
+	_check(not (face.blendshape_map as Dictionary).is_empty(), "her persona's blendshape map is in")
+
+	face.auto_blink = true
+	face.set_face_values({})
+	face.update(0.016)
+	_check(_blend(face, "blink") < 0.01, "eyes open to begin with (%.2f)" % _blend(face, "blink"))
+	face.blink_now()
+	var peak := 0.0
+	for i in 30:
+		face.update(0.016)
+		peak = maxf(peak, _blend(face, "blink"))
+	_check(peak > 0.99, "she blinks: the lids close on the mesh itself (%.2f)" % peak)
+	for i in 30:
+		face.update(0.016)
+	_check(_blend(face, "blink") < 0.01, "and open again (%.2f)" % _blend(face, "blink"))
+
+	# A logical name goes through the map: mouth_smile -> happy -> joy.
+	face.set_face_values({"mouth_smile": 0.8})
+	face.update(0.016)
+	_check(absf(_blend(face, "joy") - 0.8) < 0.01, "an emotion from Karada reaches the face (%.2f)" % _blend(face, "joy"))
+	face.set_face_values({})
+	face.update(0.016)
+	_check(_blend(face, "joy") < 0.01, "and lets go when it is dropped")
+	# Something else driving the blink: the automatic one stays out of it.
+	face.set_face_values({"eyes_closed": 1.0})
+	face.blink_now()
+	face.update(0.016)
+	_check(absf(_blend(face, "blink") - 1.0) < 0.01, "her eyes stay shut while the animation closes them")
+	face.set_face_values({})
+	# The overlay replaces; clear lets go.
+	face.set_overlay({"mouth_frown": 0.5})
+	face.update(0.016)
+	_check(absf(_blend(face, "sorrow") - 0.5) < 0.01, "an expression overlay is drawn")
+	face.set_overlay(null)
+	face.update(0.016)
+	_check(_blend(face, "sorrow") < 0.01, "and cleared")
+	# The mouth follows how loud she is, capped like the WebUI's.
+	for i in 40:
+		face.speak_level(0.5)
+		face.update(0.016)
+	_check(_blend(face, "a") > 0.3 and _blend(face, "a") <= 0.7001, "her mouth opens as she speaks (%.2f)" % _blend(face, "a"))
+	for i in 60:
+		face.speak_level(0.0)
+		face.update(0.016)
+	_check(_blend(face, "a") < 0.01, "and closes when she stops (%.2f)" % _blend(face, "a"))
+	# A descriptor's frame window: think closes the eyes from a frame on.
+	face.set_descriptor({"fps": 30, "expressions": [{"start_frame": 0, "end_frame": 1000, "targets": {"mouth_smile": 0.6}}]})
+	face.update(0.016)
+	_check(absf(_blend(face, "joy") - 0.6) < 0.01, "a descriptor's expression is drawn inside its window")
+	face.set_descriptor({"fps": 30, "expressions": [{"start_frame": 5000, "targets": {"mouth_smile": 0.6}}]})
+	face.update(0.016)
+	_check(_blend(face, "joy") < 0.01, "and not before it")
+	face.set_descriptor({})
+
+
+## What the mesh itself has for this expression's first bind (the picture, not the bookkeeping).
+func _blend(face: RefCounted, expression: String) -> float:
+	var key: String = face._resolve(expression)
+	if key == "":
+		return -1.0
+	var bind: Dictionary = (face._binds[key] as Array)[0]
+	var mi: MeshInstance3D = bind["mi"]
+	return mi.get_blend_shape_value(int(bind["idx"])) / float(bind["w"])

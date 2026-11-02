@@ -25,6 +25,15 @@ const FLOOR_Y := 0.0
 ## What the whole pod stands on: feet to hood, in metres.
 const TOTAL_HEIGHT := 0.34 * SIZE
 const SYNTH_CYAN := Color(0.43, 1.0, 1.0)
+## The grey of Synth's logo and banner (35, 35, 36): the pod's shell and the background of the
+## logos on its flanks.
+const SYNTH_GREY := Color8(35, 35, 36)
+## The logo (no text) on each flank of the tube, a square, its middle at this height.
+const LOGO_PATH := "res://mods/xenu.synth_rift/assets/synth_logo.png"
+## The same picture with only the cyan left: it glows like the trim, the grey does not.
+const LOGO_GLOW_PATH := "res://mods/xenu.synth_rift/assets/synth_logo_glow.png"
+const LOGO_SIZE := 0.5
+const LOGO_HEIGHT_ABOVE_FLOOR := 1.6
 ## The screen is a hand-sized thing whatever the pod is: 12 x 7 cm, at about the height of
 ## a standing person's chest, on the pod's front just to the right of the opening.
 const SCREEN_SIZE := Vector2(0.12, 0.07)
@@ -44,9 +53,9 @@ const FRONT_FLIP := Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
 static func build(host: Node3D) -> Dictionary:
 	var first := host.get_child_count()
 	var shell_mat := StandardMaterial3D.new()
-	shell_mat.albedo_color = Color(0.2, 0.21, 0.24)
-	shell_mat.metallic = 0.75
-	shell_mat.roughness = 0.38
+	shell_mat.albedo_color = SYNTH_GREY
+	shell_mat.metallic = 0.1
+	shell_mat.roughness = 0.6
 	shell_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	var trim_mat := StandardMaterial3D.new()
@@ -76,8 +85,10 @@ static func build(host: Node3D) -> Dictionary:
 		node.rotation = Vector3(0, a, 0)
 		node.rotate_object_local(Vector3.RIGHT, deg_to_rad(-22.0))
 
-	# A ribbed strip up the right side, like a scale.
-	_part(host, "Ribs", _ribs(), trim_mat, Vector3.ZERO)
+	# A ribbed strip up the back, like a scale (the flanks wear the logo).
+	var ribs := _part(host, "Ribs", _ribs(), trim_mat, Vector3.ZERO)
+	ribs.basis = Basis(Vector3.UP, -PI * 0.5)
+	_flank_logos(host)
 	# Cyan lines framing the opening, down both edges.
 	for side in [-1.0, 1.0]:
 		var edge := _box(Vector3(0.006 * SIZE, HEIGHT - 0.05 * SIZE, 0.006 * SIZE))
@@ -114,6 +125,76 @@ static func build(host: Node3D) -> Dictionary:
 
 	return {"lamp": lamp_nodes, "beam": beam, "beam_mat": beam_mat,
 		"button": button, "screen_mat": screen_mat, "screen_label": button.get_node("Label")}
+
+
+## Synth's logo on the outer left and right of the tube, flat against the wall, facing out. The
+## picture is read from the pack at run time (a pack carries no import of its own); without it
+## the flanks are bare and the pod still works.
+static func _flank_logos(host: Node3D) -> void:
+	var tex := load_png_texture(LOGO_PATH)
+	if tex == null:
+		return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = tex
+	var glow := load_png_texture(LOGO_GLOW_PATH)
+	if glow != null:
+		mat.emission_enabled = true
+		mat.emission_texture = glow
+		mat.emission_energy_multiplier = 1.0
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.roughness = 0.6
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	for side in [-1.0, 1.0]:
+		var node := _part(host, "Logo%s" % ("L" if side < 0.0 else "R"), _logo_arc(side * PI * 0.5), mat)
+		node.position = Vector3(0.0, FLOOR_Y + LOGO_HEIGHT_ABOVE_FLOOR, 0.0)
+
+
+## The logo as a patch of the tube's own surface (a flat square would stand off the curved
+## wall by centimetres at its edges), centred on `centre` (0 = straight ahead, -Z; positive
+## turns toward +X), read left to right as seen from outside.
+static func _logo_arc(centre: float) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var r := R_OUT + 0.002
+	var span := LOGO_SIZE / r
+	var steps := 16
+	for i in steps:
+		var u0 := float(i) / float(steps)
+		var u1 := float(i + 1) / float(steps)
+		var corners: Array[Vector3] = []
+		for u: float in [u0, u1]:
+			# Walking right, as seen from outside, is walking toward smaller angles.
+			var a := centre + (0.5 - u) * span
+			corners.append(Vector3(sin(a) * r, 0.0, -cos(a) * r))
+		var h := LOGO_SIZE * 0.5
+		var quad := [
+			[corners[0] + Vector3(0, h, 0), Vector2(u0, 0.0)],
+			[corners[1] + Vector3(0, h, 0), Vector2(u1, 0.0)],
+			[corners[1] - Vector3(0, h, 0), Vector2(u1, 1.0)],
+			[corners[0] - Vector3(0, h, 0), Vector2(u0, 1.0)],
+		]
+		for k: int in [0, 1, 2, 0, 2, 3]:
+			var corner: Vector3 = quad[k][0]
+			st.set_uv(quad[k][1])
+			st.set_normal(Vector3(corner.x, 0.0, corner.z).normalized())
+			st.add_vertex(corner)
+	return st.commit()
+
+
+## A PNG of the pack as a texture, or null when the pack lacks it.
+static func load_png_texture(path: String) -> Texture2D:
+	if not FileAccess.file_exists(path):
+		push_warning("[SynthRift] the pack lacks %s" % path)
+		return null
+	var image := Image.new()
+	var err := image.load_png_from_buffer(FileAccess.get_file_as_bytes(path))
+	if err != OK:
+		push_warning("[SynthRift] %s would not decode (%d)" % [path, err])
+		return null
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
 
 
 ## Where the screen's face points: out from the pod at its angle, tilted a little up.

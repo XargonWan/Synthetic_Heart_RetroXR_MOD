@@ -17,6 +17,8 @@
 ## Only a Mixamo/VRoid pair is mapped (`BONES`). Anything else loads as a still model.
 extends Node3D
 
+const VrmFace := preload("res://mods/xenu.synth_rift/scripts/vrm_face.gd")
+
 ## [VRM bone, Mixamo bone] with {s} for the side: "L"/"Left" and "R"/"Right".
 const BODY_BONES := [
 	["Hips", "Hips"], ["Spine", "Spine"], ["Chest", "Spine1"], ["UpperChest", "Spine2"],
@@ -45,6 +47,8 @@ var _playing := ""
 var _after := ""
 var _lib := AnimationLibrary.new()
 var _clips: Dictionary = {}
+## Her face (blink, emotion, mouth): null until a model is loaded.
+var face: RefCounted = null
 
 
 ## The model, from the bytes of a .vrm. True when it loaded with a skeleton.
@@ -70,10 +74,39 @@ func load_model(vrm: PackedByteArray) -> bool:
 	model.name = "Model"
 	add_child(model)
 	height = _measure_height()
+	_build_face(state, root)
 	# Keep it from drawing a frame in the pose the file ships in until it has one.
 	print("[Rift] VRM loaded: %d bones, %.2f m" % [skeleton.get_bone_count(), height])
 	_bind()
 	return true
+
+
+## Her expressions, from the model file (see VrmFace). Godot hands no scene node back for a skinned mesh
+## (GLTFState.get_scene_node is null for it), so a glTF node is found again by its NAME under the model.
+func _build_face(state: GLTFState, root: Node3D) -> void:
+	face = VrmFace.new()
+	var json_nodes: Array = state.json.get("nodes", []) if state.json.get("nodes") is Array else []
+	var mesh_instance_of := func(node_index: int) -> Node:
+		if node_index < 0 or node_index >= json_nodes.size():
+			return null
+		var found := root.find_child(str((json_nodes[node_index] as Dictionary).get("name", "")), true, false)
+		return found if found is MeshInstance3D else null
+	var mesh_nodes := func(mesh_index: int) -> Array:
+		var out: Array = []
+		for i in json_nodes.size():
+			if int((json_nodes[i] as Dictionary).get("mesh", -1)) == mesh_index:
+				var n: Node = mesh_instance_of.call(i)
+				if n != null:
+					out.append(n)
+		return out
+	face.call("load_from", state.json, mesh_instance_of, mesh_nodes)
+
+
+## The skin's persona.json (its blendshape_map says which expression each logical face name is).
+func set_persona(persona: Dictionary) -> void:
+	if face != null and persona.get("blendshape_map") is Dictionary:
+		face.set("blendshape_map", persona["blendshape_map"])
+		print("[Rift] her face map: %d names" % (persona["blendshape_map"] as Dictionary).size())
 
 
 ## One animation, from the bytes of a Mixamo .fbx, under `clip_name`. The first one loaded
@@ -227,6 +260,8 @@ func _process(delta: float) -> void:
 	if _playing != "":
 		_retarget()
 	_apply_gaze(delta)
+	if face != null:
+		face.call("update", delta)
 
 
 # ── where she looks ──────────────────────────────────────────────────────────
