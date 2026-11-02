@@ -29,7 +29,7 @@ const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sou
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
-const MOD_VERSION := "0.1.0"
+const MOD_VERSION := "0.2.0"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
