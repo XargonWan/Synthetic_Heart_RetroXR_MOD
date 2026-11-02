@@ -39,7 +39,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.5.0"
+const MOD_VERSION := "0.6.0"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -392,6 +392,7 @@ func _arrive() -> void:
 	if not _spawn_body():
 		_abort("no_body", true)
 		return
+	_body.world_lookup = Callable(self, "_lookup_entity")
 	_body.set_fetcher(_fetcher)
 	if _puppet != null and _assets_state == "ready":
 		_body.set_karada_state(_karada_state)
@@ -576,17 +577,47 @@ func _load_body(assets: Dictionary) -> void:
 	for clip_name: String in anims:
 		var entry: Variant = anims[clip_name]
 		var clips: Array = (entry as Dictionary).get("clips", []) if entry is Dictionary else []
-		if clips.is_empty() or not (clips[0] is Dictionary):
+		var urls := _own_clips(clip_name, clips)
+		var names: Array = []
+		for i in urls.size():
+			var bytes: PackedByteArray = await fetcher.call("get_bytes", urls[i])
+			if not _loading_still_wanted(fetcher, puppet):
+				return
+			var variant := "%s__%d" % [clip_name, i]
+			if not bytes.is_empty() and bool(puppet.call("add_clip", variant, bytes)):
+				names.append(variant)
+		if names.is_empty():
 			continue
-		var bytes: PackedByteArray = await fetcher.call("get_bytes", str((clips[0] as Dictionary).get("url", "")))
-		if not _loading_still_wanted(fetcher, puppet):
-			return
-		if not bytes.is_empty():
-			puppet.call("add_clip", clip_name, bytes)
+		if names.size() > 1 and clip_name == "idle":
+			# A skin can ship a standing clip that stands badly (Rei's Idle arches her back): of the
+			# standing ones keep the most upright. Not for the others: how upright a gesture or a
+			# typing pose is says nothing about it.
+			await puppet.call("choose_most_upright", clip_name, names)
+		else:
+			puppet.call("alias_clip", clip_name, names[0])
 	_puppet = puppet
 	_assets_state = "ready"
 	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str(anims.keys())])
 	_set_status("Rift open: charging ...", false)
+
+
+## The clips that ARE `state`: the files directly in its folder (`animations/idle/Idle.fbx`), not the
+## variants filed under it (`animations/idle/happy/Happy.fbx` is a mood, not standing). At most four.
+func _own_clips(state: String, clips: Array) -> Array:
+	var own: Array = []
+	var any: Array = []
+	for c: Variant in clips:
+		if not (c is Dictionary):
+			continue
+		var url := str((c as Dictionary).get("url", ""))
+		if url.is_empty():
+			continue
+		any.append(url)
+		if url.get_base_dir().get_file() == state:
+			own.append(url)
+	if own.is_empty() and not any.is_empty():
+		own = [any[0]]
+	return own.slice(0, 4)
 
 
 ## False (and everything put away) when the summon was called off while a download ran.
@@ -684,6 +715,34 @@ func _entities() -> Array:
 	if cam != null:
 		found.append({"name": "player", "type": "player", "label": "the player", "position": cam.global_position})
 	return found
+
+
+## The nearest thing in the room that `query` names (its node name or the label she is told), or {}.
+## Exact names win over partial ones.
+func _lookup_entity(query: String) -> Dictionary:
+	var q := query.strip_edges().to_lower()
+	if q.is_empty() or _body == null or not is_instance_valid(_body):
+		return {}
+	var exact: Array = []
+	var partial: Array = []
+	for e: Dictionary in _entities():
+		if str(e.get("type", "")) == "player":
+			continue
+		var name_l := str(e.get("name", "")).to_lower()
+		var label_l := str(e.get("label", "")).to_lower()
+		if q == name_l or q == label_l:
+			exact.append(e)
+		elif name_l.contains(q) or label_l.contains(q):
+			partial.append(e)
+	var pool: Array = exact if not exact.is_empty() else partial
+	var best: Dictionary = {}
+	var best_d := INF
+	for e: Dictionary in pool:
+		var d: float = (e["position"] as Vector3).distance_to(_body.global_position)
+		if d < best_d:
+			best_d = d
+			best = e
+	return best
 
 
 ## `_entities()` seen from the body: bearing, distance and side, nearest first.

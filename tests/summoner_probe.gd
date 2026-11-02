@@ -37,6 +37,7 @@ var _pod_at := Vector3.ZERO
 var _saw_think := false
 var _saw_voice := false
 var _saw_idle_again := false
+var _gaze_checked := false
 var _was_ethereal := false
 var _done := false
 
@@ -313,6 +314,7 @@ func _process(delta: float) -> void:
 		_check(_summoner.global_position.distance_to(_pod_at) < 0.05, "the pod never moved (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
 		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to her (%s)" % _menu_ui._status.text)
 		_chat_roundtrip(body)
+		_gaze_roundtrip(body)
 		# Her own body, from her skin: the model and the animations were fetched from the server.
 		_check(body.has_puppet(), "she wears her own body (Rei's VRM), not the capsule")
 		if body.has_puppet():
@@ -412,6 +414,39 @@ func _chat_roundtrip(body: Node3D) -> void:
 	await get_tree().process_frame
 	_check(ui._log.get_parsed_text().contains("ciao Rei"), "and shown on the page")
 	_check(ui._edit.text == "", "the field is emptied")
+
+
+## She looks at the player when they move and she is doing nothing else, for a while, then stops; never
+## right after she chose where to look herself.
+func _gaze_roundtrip(body: Node3D) -> void:
+	if _gaze_checked:
+		return
+	_gaze_checked = true
+	body.gaze_hold = 1.2
+	# Let her finish whatever she was asked to do (the server is still sending commands), then be still.
+	for i in 600:
+		await get_tree().create_timer(0.1).timeout
+		if not is_instance_valid(body):
+			return
+		if body._goal == null and Time.get_ticks_msec() > body._deliberate_until + 500:
+			break
+	# The chat page was left open by the earlier check; with it open she keeps looking at whoever writes.
+	var panel := body.get_node_or_null("ChatPanel") as Node3D
+	if panel != null and panel.visible:
+		panel.hide_panel()
+	await get_tree().create_timer(2.5).timeout
+	_check(not body.is_gazing(), "she is not staring at a player who is standing still")
+	_camera.global_position += Vector3(0.6, 0, 0)       # the player steps sideways
+	await get_tree().create_timer(0.9).timeout
+	_check(body.is_gazing(), "the player moved: she looks at them")
+	# It is released a little after they stop (she holds it 1.2 s here, and eases out in 0.3).
+	await get_tree().create_timer(2.4).timeout
+	_check(not body.is_gazing(), "and stops looking once they have been still a while")
+	# She decides to look at something else: the reflex stays out of it.
+	body.act("look_at", {"target": "Crate"})
+	_camera.global_position += Vector3(-0.6, 0, 0)
+	await get_tree().create_timer(0.9).timeout
+	_check(not body.is_gazing(), "a player moving does not pull her gaze off what she chose to look at (attention %.2f, weight %.2f, deliberate %d ms left)" % [body._attention, float(body._puppet.call("gaze_weight")), body._deliberate_until - Time.get_ticks_msec()])
 
 
 func _finish(what: String) -> void:

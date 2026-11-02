@@ -115,6 +115,62 @@ func add_clip(clip_name: String, fbx: PackedByteArray) -> bool:
 	return true
 
 
+## How far the animation leans the torso, in degrees, averaged over its length: hips to neck against the
+## vertical in the source rig, positive forward, NEGATIVE = arched back. Measured on the Mixamo skeleton
+## itself, so it says what the clip does and not what the retarget made of it. Async: the player
+## applies a pose on a frame.
+func torso_lean(clip_name: String) -> float:
+	if _src_skel == null or _player == null or not _clips.has(clip_name):
+		return 0.0
+	var hips := _src_skel.find_bone(_mx("Hips"))
+	var neck := _src_skel.find_bone(_mx("Neck"))
+	if hips < 0 or neck < 0:
+		return 0.0
+	var anim: Animation = _clips[clip_name]
+	var before := _playing
+	_player.play(clip_name)
+	var samples := 12
+	var sum := 0.0
+	for k in samples:
+		var t := anim.length * float(k) / float(samples)
+		_player.seek(t, true)
+		await get_tree().process_frame
+		_player.seek(t, true)
+		var d := _src_skel.get_bone_global_pose(neck).origin - _src_skel.get_bone_global_pose(hips).origin
+		sum += rad_to_deg(atan2(d.z, d.y))
+	if before != "":
+		_player.play(before)
+	else:
+		_player.stop()
+	return sum / float(samples)
+
+
+## Of several clips for one state (a skin can ship an idle that stands badly), keep the one that
+## stands most upright as `state`. Returns its name. The others stay under their own names.
+func choose_most_upright(state: String, candidates: Array) -> String:
+	var best := ""
+	var best_lean := -INF
+	for c: Variant in candidates:
+		var lean: float = await torso_lean(str(c))
+		print("[Rift] %s: torso leans %+.1f deg (negative = arched back)" % [str(c), lean])
+		if lean > best_lean:
+			best_lean = lean
+			best = str(c)
+	if best != "":
+		alias_clip(state, best)
+	return best
+
+
+## `state` plays what `source` is.
+func alias_clip(state: String, source: String) -> void:
+	if not _clips.has(source):
+		return
+	if _lib.has_animation(state):
+		_lib.remove_animation(state)
+	_lib.add_animation(state, _clips[source])
+	_clips[state] = _clips[source]
+
+
 func has_clip(clip_name: String) -> bool:
 	return _clips.has(clip_name)
 
@@ -167,9 +223,94 @@ func mapped_bones() -> int:
 	return _pairs.size()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _playing != "":
 		_retarget()
+	_apply_gaze(delta)
+
+
+# ── where she looks ──────────────────────────────────────────────────────────
+#
+# Her head follows a point in the world: the animation moves it, then this turns neck and head the
+# rest of the way, clamped to what a neck can do and eased in and out so it never snaps. It is a
+# reflex layer on top of the clip, like the WebUI avatar's eyes following the pointer: whether she
+# looks is decided by the body (SynthBody), how is decided here.
+
+const GAZE_YAW_LIMIT := deg_to_rad(70.0)
+const GAZE_PITCH_UP := deg_to_rad(30.0)
+const GAZE_PITCH_DOWN := deg_to_rad(25.0)
+## How much of the turn the neck takes; the head takes the rest.
+const GAZE_NECK_SHARE := 0.4
+## Seconds the look takes to come in and to go out (a time constant).
+const GAZE_EASE := 0.3
+
+var _gaze_target: Variant = null
+var _gaze_weight := 0.0
+
+
+## Look at a world point, or at nothing (null): she eases back to the clip's own head.
+func set_gaze(world_point: Variant) -> void:
+	_gaze_target = world_point
+
+
+func gaze_weight() -> float:
+	return _gaze_weight
+
+
+## Where her head points, in the model's space (-Z is her front): the head's turn from its rest
+## applied to the front. For the tests, and for the turn below.
+func head_forward() -> Vector3:
+	var head := skeleton.find_bone(_vrm("Head")) if skeleton != null else -1
+	if head < 0:
+		return Vector3(0, 0, -1)
+	var turn := skeleton.get_bone_global_pose(head).basis.get_rotation_quaternion() \
+		* skeleton.get_bone_global_rest(head).basis.get_rotation_quaternion().inverse()
+	return turn * Vector3(0, 0, -1)
+
+
+func _apply_gaze(delta: float) -> void:
+	if skeleton == null:
+		return
+	var want := 1.0 if _gaze_target != null else 0.0
+	_gaze_weight = move_toward(_gaze_weight, want, delta / GAZE_EASE)
+	if _gaze_weight < 0.001:
+		return
+	var neck := skeleton.find_bone(_vrm("Neck"))
+	var head := skeleton.find_bone(_vrm("Head"))
+	if neck < 0 or head < 0:
+		return
+	# While it eases out there is no target any more: hold the last one.
+	if _gaze_target != null:
+		_last_gaze = _gaze_target
+	if _last_gaze == null:
+		return
+	var skel_inv := skeleton.global_transform.affine_inverse()
+	var to_target: Vector3 = skel_inv * (_last_gaze as Vector3) - skeleton.get_bone_global_pose(head).origin
+	if to_target.length() < 0.05:
+		return
+	var dir := to_target.normalized()
+	# Against her front (-Z): yaw about UP, pitch above the horizon, both clamped.
+	var yaw := clampf(atan2(dir.x, -dir.z), -GAZE_YAW_LIMIT, GAZE_YAW_LIMIT)
+	var pitch := clampf(asin(clampf(dir.y, -1.0, 1.0)), -GAZE_PITCH_DOWN, GAZE_PITCH_UP)
+	var goal := Vector3(sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch))
+	var current := head_forward()
+	var arc := Quaternion(current, goal) if current.dot(goal) < 0.9999 else Quaternion.IDENTITY
+	var turn := Quaternion.IDENTITY.slerp(arc, _gaze_weight)
+	_turn_bone(neck, Quaternion.IDENTITY.slerp(turn, GAZE_NECK_SHARE))
+	_turn_bone(head, Quaternion.IDENTITY.slerp(turn, 1.0 - GAZE_NECK_SHARE))
+
+
+var _last_gaze: Variant = null
+
+
+## Turn a bone by `q` in model space (its children follow).
+func _turn_bone(bone: int, q: Quaternion) -> void:
+	var parent := skeleton.get_bone_parent(bone)
+	var parent_rot := Quaternion.IDENTITY
+	if parent >= 0:
+		parent_rot = skeleton.get_bone_global_pose(parent).basis.get_rotation_quaternion()
+	var now := skeleton.get_bone_global_pose(bone).basis.get_rotation_quaternion()
+	skeleton.set_bone_pose_rotation(bone, (parent_rot.inverse() * q * now).normalized())
 
 
 # ── the mapping ──────────────────────────────────────────────────────────────

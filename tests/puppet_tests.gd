@@ -65,6 +65,48 @@ func _initialize() -> void:
 		var i := src.find_bone(hand)
 		travelled = maxf(travelled, (src.get_bone_global_pose(i).origin - src.get_bone_global_rest(i).origin).length())
 	_check(travelled > 0.25, "the greeting moves a hand %.2f m from rest (else these numbers are rest against rest)" % travelled)
+	# Two idles: the one that arches her back is not the one she stands in.
+	_check(puppet.add_clip("idle__0", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle.fbx")), "Idle loads")
+	_check(puppet.add_clip("idle__1", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle2.fbx")), "Idle2 loads")
+	var lean0: float = await puppet.torso_lean("idle__0")
+	var lean1: float = await puppet.torso_lean("idle__1")
+	_check(lean0 < -8.0, "Idle arches the torso back (%+.1f deg)" % lean0)
+	_check(lean1 > lean0 + 3.0, "Idle2 stands straighter (%+.1f deg)" % lean1)
+	var best: String = await puppet.choose_most_upright("idle", ["idle__0", "idle__1"])
+	_check(best == "idle__1", "the straighter one is chosen (%s)" % best)
+	_check(puppet._clips["idle"] == puppet._clips["idle__1"], "and it is what 'idle' plays")
+	# Her gaze: the head turns the rest of the way to a point, within what a neck can do, and lets go.
+	puppet.play("idle", true)
+	puppet.seek(2.0)
+	await process_frame
+	puppet.seek(2.0)
+	var head: int = tgt.find_bone("J_Bip_C_Head")
+	var head_at: Vector3 = tgt.get_bone_global_pose(head).origin
+	var target := Vector3(2.0, head_at.y, -2.0)   # forward and to the +X side, 45 degrees
+	var to_target := (target - head_at).normalized()
+	var before := rad_to_deg(puppet.head_forward().angle_to(to_target))
+	puppet.set_gaze(target)
+	for i in 6:
+		puppet._retarget()
+		puppet._apply_gaze(0.2)
+	var after := rad_to_deg(puppet.head_forward().angle_to(to_target))
+	_check(before > 20.0, "without it her head is well off the point (%.0f deg)" % before)
+	_check(after < 8.0, "with it her head points at it (%.0f deg)" % after)
+	_check(puppet.gaze_weight() > 0.99, "fully eased in")
+	# A point behind her: the neck stops where a neck stops, it does not wring.
+	puppet.set_gaze(Vector3(0.0, head_at.y, 3.0))
+	for i in 6:
+		puppet._retarget()
+		puppet._apply_gaze(0.2)
+	var f: Vector3 = puppet.head_forward()
+	var yaw := rad_to_deg(absf(atan2(f.x, -f.z)))
+	_check(yaw < 80.0, "a point behind her turns her head %.0f deg, not 180" % yaw)
+	# Let go: she eases back to what the clip does.
+	puppet.set_gaze(null)
+	for i in 30:
+		puppet._retarget()
+		puppet._apply_gaze(0.1)
+	_check(puppet.gaze_weight() < 0.01, "and it lets go (%.3f)" % puppet.gaze_weight())
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	quit(1 if _failed > 0 or _count == 0 else 0)
 

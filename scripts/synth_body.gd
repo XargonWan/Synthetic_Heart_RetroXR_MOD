@@ -11,6 +11,7 @@ extends CharacterBody3D
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
+const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 
 const WALK_SPEED := 1.1
@@ -40,6 +41,24 @@ var _fetcher: Node = null
 var _voice: AudioStreamPlayer3D = null
 var _voice_queue: Array = []
 var _voice_heard := 0
+## Set by the Summoner: (query: String) -> Dictionary of the nearest thing in the room called that
+## ({name, label, type, systemid, powered, position}), or {}. "player" is handled here.
+var world_lookup: Callable = Callable()
+## Seconds she keeps looking at the player after they last moved or clicked.
+var gaze_hold := 5.0
+var _attention := 0.0
+## While she has just chosen where to look, the reflex leaves it alone until then (ticks, ms).
+var _deliberate_until := 0
+var _gaze_clock := 0.0
+var _gaze_cam_pos := Vector3.ZERO
+var _gaze_cam_fwd := Vector3.ZERO
+const GAZE_MOVE_M := 0.06
+const GAZE_TURN_DEG := 5.0
+const DELIBERATE_MS := 6000
+var _follow := false
+var _follow_clock := 0.0
+const FOLLOW_DISTANCE := 1.4
+const STOP_SHORT := 0.9
 var _bubble_left := 0.0
 var _goal: Variant = null  # Vector3 while walking
 var _stuck_for := 0.0
@@ -121,6 +140,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_update_gaze(delta)
 	if _bubble_left > 0.0:
 		_bubble_left -= delta
 		if _bubble_left <= 0.0:
@@ -135,6 +155,7 @@ func _physics_process(delta: float) -> void:
 		velocity.x = 0.0
 		velocity.z = 0.0
 		move_and_slide()
+		_follow_the_player(delta)
 		return
 
 	_set_anim("walk")
@@ -164,6 +185,70 @@ func _physics_process(delta: float) -> void:
 		_stuck_sample = 0.0
 	if _stuck_for > STUCK_SECONDS:
 		_end_walk(false, "blocked")
+
+
+func _input(event: InputEvent) -> void:
+	# A click is the player doing something: she notices (the WebUI avatar's eyes do the same).
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		_attention = gaze_hold
+
+
+## The reflex: when the player moves or clicks and she is doing nothing else, she looks at them for a
+## while. Never while she walks (she looks where she goes), never right after she chose where to look,
+## and always while she is speaking or being written to.
+func _update_gaze(delta: float) -> void:
+	if _puppet == null:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	_gaze_clock += delta
+	if _gaze_clock >= 0.2:
+		var moved := cam.global_position.distance_to(_gaze_cam_pos) > GAZE_MOVE_M
+		var turned := rad_to_deg(_gaze_cam_fwd.angle_to(-cam.global_basis.z)) > GAZE_TURN_DEG if _gaze_cam_fwd != Vector3.ZERO else false
+		if moved or turned:
+			_attention = gaze_hold
+		_gaze_cam_pos = cam.global_position
+		_gaze_cam_fwd = -cam.global_basis.z
+		_gaze_clock = 0.0
+	if _voice != null and _voice.playing:
+		_attention = maxf(_attention, 2.0)
+	if get_node_or_null("ChatPanel") != null and (get_node("ChatPanel") as Node3D).visible:
+		_attention = maxf(_attention, 2.0)
+	_attention = maxf(_attention - delta, 0.0)
+	var busy := _goal != null or Time.get_ticks_msec() < _deliberate_until
+	_puppet.call("set_gaze", (cam.global_position + Vector3(0, -0.05, 0)) if _attention > 0.0 and not busy else null)
+
+
+func is_gazing() -> bool:
+	return _puppet != null and float(_puppet.call("gaze_weight")) > 0.5
+
+
+## While she was asked to follow: keep to FOLLOW_DISTANCE of the player (inside her leash).
+func _follow_the_player(delta: float) -> void:
+	if not _follow:
+		return
+	_follow_clock += delta
+	if _follow_clock < 0.5:
+		return
+	_follow_clock = 0.0
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var to_player := Vector3(cam.global_position.x - global_position.x, 0.0, cam.global_position.z - global_position.z)
+	if to_player.length() <= FOLLOW_DISTANCE + 0.4:
+		return
+	var dest := cam.global_position - to_player.normalized() * FOLLOW_DISTANCE
+	dest.y = global_position.y
+	var from_anchor := Vector3(dest.x - anchor.x, 0.0, dest.z - anchor.z)
+	if from_anchor.length() > LEASH:
+		var edge := anchor + from_anchor.normalized() * LEASH
+		dest = Vector3(edge.x, global_position.y, edge.z)
+	_goal = dest
+	_walk_elapsed = 0.0
+	_stuck_for = 0.0
+	_stuck_sample = 0.0
+	_last_pos = global_position
 
 
 func _end_walk(ok: bool, detail: String) -> void:
@@ -397,6 +482,10 @@ func say_bubble(text: String) -> void:
 
 ## Answer a verb. Always returns {ok, detail, data}; never throws.
 func act(action: String, payload: Dictionary) -> Dictionary:
+	if action in ["look", "look_at", "inspect", "emote", "move"]:
+		# She chose where to look or what to do: the reflex stays out of it for a while.
+		_deliberate_until = Time.get_ticks_msec() + DELIBERATE_MS
+		_attention = 0.0
 	match action:
 		"say":
 			var text := str(payload.get("text", "")).strip_edges()
@@ -409,6 +498,17 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 			return {"ok": true, "data": {"position": Protocol.vec(global_position)}}
 		"look":
 			return _look(payload)
+		"look_at":
+			return _look_at(payload)
+		"inspect":
+			return _inspect(payload)
+		"follow":
+			_follow = true
+			_follow_clock = 0.0
+			return {"ok": true, "detail": "following the player"}
+		"unfollow":
+			_follow = false
+			return {"ok": true, "detail": "not following"}
 		"move":
 			return await _move(payload)
 		"emote":
@@ -421,6 +521,60 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 		_:
 			print("[Rift] verb %s is not built yet" % action)
 			return {"ok": false, "detail": "not_implemented_yet: " + action}
+
+
+## What `target` names: the player, or the nearest thing in the room with that name. {} when nothing.
+func _resolve(payload: Dictionary) -> Dictionary:
+	var query := str(payload.get("target", payload.get("name", ""))).strip_edges()
+	if query.is_empty():
+		return {}
+	if query.to_lower() in ["player", "the player", "you", "user"]:
+		var cam := get_viewport().get_camera_3d()
+		if cam == null:
+			return {}
+		return {"name": "player", "label": "the player", "type": "player", "position": cam.global_position}
+	if world_lookup.is_valid():
+		return world_lookup.call(query)
+	return {}
+
+
+func _face_point(p: Vector3) -> void:
+	var flat := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
+	if flat.length() > 0.01:
+		rotation.y = atan2(-flat.x, -flat.z)
+
+
+func _look_at(payload: Dictionary) -> Dictionary:
+	var hit := _resolve(payload)
+	if hit.is_empty():
+		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
+	_face_point(hit["position"])
+	return {"ok": true, "detail": "looking at %s" % str(hit.get("label", "it"))}
+
+
+## Turn to it and say what it is. Nothing about a screen's picture yet: that is not built.
+func _inspect(payload: Dictionary) -> Dictionary:
+	var hit := _resolve(payload)
+	if hit.is_empty():
+		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
+	var pos: Vector3 = hit["position"]
+	_face_point(pos)
+	var bearing := SummonerView.bearing_deg(global_position, -global_basis.z, pos)
+	var dist := Vector2(pos.x - global_position.x, pos.z - global_position.z).length()
+	var bits: PackedStringArray = []
+	if str(hit.get("type", "")) == "player":
+		bits.append("a person")
+	else:
+		bits.append(str(hit.get("type", "something")))
+	if str(hit.get("systemid", "")) != "":
+		bits.append("a %s machine" % str(hit["systemid"]))
+	if hit.has("powered"):
+		bits.append("switched on" if bool(hit["powered"]) else "switched off")
+	var text := "%s: %s, %.1f m away, %s." % [str(hit.get("label", "it")), ", ".join(bits), dist,
+		SummonerView.side_words(bearing)]
+	print("[Rift] inspect: %s" % text)
+	return {"ok": true, "detail": text, "data": {"label": hit.get("label", ""), "type": hit.get("type", ""),
+		"distance": snappedf(dist, 0.1), "powered": hit.get("powered", null)}}
 
 
 func _look(payload: Dictionary) -> Dictionary:
@@ -454,7 +608,15 @@ func _move(payload: Dictionary) -> Dictionary:
 			away.y = 0.0
 			point = toward + (away.normalized() * 0.8 if away.length() > 0.01 else Vector3.ZERO)
 	if not (point is Vector3):
-		return {"ok": false, "detail": "no_target"}
+		# A thing in the room, by its name: walk up to it, not into it.
+		var named := _resolve(payload)
+		if not named.is_empty():
+			var there: Vector3 = named["position"]
+			var back := Vector3(global_position.x - there.x, 0.0, global_position.z - there.z)
+			point = there + (back.normalized() * STOP_SHORT if back.length() > 0.01 else Vector3.ZERO)
+	if not (point is Vector3):
+		return {"ok": false, "detail": "no_target: nothing called '%s'" % str(payload.get("target", ""))}
+	_follow = false  # an explicit walk ends following
 	var dest: Vector3 = point
 	var from_anchor := Vector3(dest.x - anchor.x, 0.0, dest.z - anchor.z)
 	if from_anchor.length() > LEASH:

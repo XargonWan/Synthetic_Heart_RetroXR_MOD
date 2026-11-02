@@ -48,11 +48,14 @@ func _ready() -> void:
 	var t0 := Time.get_ticks_msec()
 	_check(puppet.load_model(FileAccess.get_file_as_bytes(skin + "/model.vrm")), "the model loads")
 	print("[probe] model in %d ms" % (Time.get_ticks_msec() - t0))
-	_cam.position = Vector3(0, puppet.height * 0.55, -3.2)   # she faces -Z
+	var side := OS.get_environment("VIEW") == "side"
+	# She faces -Z; "side" looks at her from her left (+X... her right is -X), full length.
+	_cam.position = Vector3(3.2, puppet.height * 0.5, 0) if side else Vector3(0, puppet.height * 0.55, -3.2)
 	_cam.look_at(Vector3(0, puppet.height * 0.5, 0))
 	await _shoot(out, "1_vrm_rest_pose")
 
-	var clips := {"idle": "idle/Idle.fbx", "greet": "greet/Standing Greeting.fbx"}
+	var idle_file := OS.get_environment("IDLE") if not OS.get_environment("IDLE").is_empty() else "idle/Idle.fbx"
+	var clips := {"idle": idle_file, "greet": "greet/Standing Greeting.fbx"}
 	for clip: String in clips:
 		t0 = Time.get_ticks_msec()
 		_check(puppet.add_clip(clip, FileAccess.get_file_as_bytes(skin + "/animations/" + clips[clip])), "%s loads" % clip)
@@ -65,8 +68,9 @@ func _ready() -> void:
 		puppet.seek(t)
 		await _shoot(out, "2_greet_%03d" % int(t * 10))
 	puppet.play("idle")
-	puppet.seek(4.0)
-	await _shoot(out, "3_idle_4s")
+	for t: float in [0.0, 4.0, 8.0]:
+		puppet.seek(t)
+		await _shoot(out, "3_idle_%02ds" % int(t))
 	get_tree().quit(0)
 
 

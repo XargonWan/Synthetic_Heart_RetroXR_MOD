@@ -20,6 +20,14 @@ const WORLD_VERBS: Array[String] = [
 const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet", "write", "computer", "touch"]
 
 
+## What this mod can really carry out. Synth is shown ONLY these (the hello says so): a verb she is
+## offered and the body cannot do is a turn wasted on an error, which is how the first session went.
+## Add a verb here when SynthBody.act does it, and not before.
+const IMPLEMENTED_VERBS: Array[String] = [
+	"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
+]
+
+
 static func is_known_verb(verb: String) -> bool:
 	return CORE_VERBS.has(verb) or WORLD_VERBS.has(verb)
 
@@ -117,6 +125,7 @@ static func trusts_unverified_tls(url: String) -> bool:
 
 static func hello(room: String, capabilities: Array, animations: Array, mod_version: String) -> Dictionary:
 	return {
+		"verbs": IMPLEMENTED_VERBS,
 		"type": "hello",
 		"protocol": PROTOCOL,
 		"room": room,

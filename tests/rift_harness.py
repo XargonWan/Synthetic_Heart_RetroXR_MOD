@@ -137,7 +137,27 @@ async def _drive():
     show("move through the wall", await conn.act("move", {"x": 0, "y": 0, "z": -6}))
     show("move 50 m away", await conn.act("move", {"x": 50, "y": 0, "z": 0}))
     show("look at (5,0,0)", await conn.act("look", {"x": 5, "y": 0, "z": 0}))
-    show("pick_up (not built)", await conn.act("pick_up", {"target": "cart"}))
+    show("pick_up (the mod never declared it)", await conn.act("pick_up", {"target": "cart"}))
+    # What she is offered is what the mod said it can do, and nothing else.
+    declared = conn.declared_verbs()
+    want = {"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote"}
+    print(f"[synth] CHECK {'ok  ' if declared == want else 'FAIL'} verbs: the mod declared {sorted(declared)}")
+    offered = set(conn.get_world_actions()) | set(conn.core_verbs)
+    print(f"[synth] CHECK {'ok  ' if offered == want and 'observe' not in offered and 'attack' not in offered else 'FAIL'} verbs: offered to her {sorted(offered)}")
+    # Curiosity: she can look at things, go to them by name, and ask what they are.
+    r = await conn.act("inspect", {"target": "Crate"})
+    show("inspect Crate", r)
+    print(f"[synth] CHECK {'ok  ' if r.ok and 'Crate' in (r.detail or '') and 'm away' in (r.detail or '') else 'FAIL'} inspect: told what it is and where")
+    r = await conn.act("inspect", {"target": "no such thing"})
+    print(f"[synth] CHECK {'ok  ' if not r.ok and 'nothing called' in (r.detail or '') else 'FAIL'} inspect: honest about what is not there ({r.detail!r})")
+    r = await conn.act("look_at", {"target": "player"})
+    print(f"[synth] CHECK {'ok  ' if r.ok else 'FAIL'} look_at: the player ({r.detail!r})")
+    r = await conn.act("move", {"target": "Crate"})
+    d = r.data.get("position") or {}
+    near = ((d.get("x", 99) - 0.8) ** 2 + (d.get("z", 99) - 2.8) ** 2) ** 0.5
+    print(f"[synth] CHECK {'ok  ' if r.ok and 0.4 < near < 1.4 else 'FAIL'} move: to a thing by its name, up to it and not into it ({near:.2f} m from it)")
+    r1 = await conn.act("follow", {}); r2 = await conn.act("unfollow", {})
+    print(f"[synth] CHECK {'ok  ' if r1.ok and r2.ok else 'FAIL'} follow / unfollow")
     show("press_button via connector", await conn.act("press_button", {}))
     # bypass the connector: a raw frame the MOD must refuse on its own
     fut = asyncio.get_running_loop().create_future()
@@ -145,6 +165,8 @@ async def _drive():
     await conn._ws.send_json({"type": "action", "id": 999, "action": "press_button", "payload": {}})
     show("press_button RAW to the mod", await asyncio.wait_for(fut, 5))
     show("state frame seen", VesselActionResult(ok=bool(conn._state), data=conn._state))
+    if os.environ.get("PROBE") == "summoner":
+        await asyncio.sleep(30)   # the probe looks at how she behaves when nobody is asking her anything
     await FakePlugin().disconnect_world("retroxr")
 
 
