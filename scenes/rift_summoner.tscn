@@ -1,0 +1,50 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://mods/xenu.synth_rift/scripts/rift_summoner.gd" id="1_summoner"]
+
+[sub_resource type="BoxShape3D" id="Shape_body"]
+size = Vector3(0.14, 0.12, 0.14)
+
+[sub_resource type="CylinderMesh" id="Mesh_base"]
+top_radius = 0.06
+bottom_radius = 0.07
+height = 0.08
+
+[sub_resource type="StandardMaterial3D" id="Mat_base"]
+albedo_color = Color(0.13, 0.14, 0.2, 1)
+metallic = 0.6
+roughness = 0.35
+
+[sub_resource type="SphereMesh" id="Mesh_lamp"]
+radius = 0.03
+height = 0.06
+
+[sub_resource type="PrismMesh" id="Mesh_crest"]
+size = Vector3(0.08, 0.08, 0.02)
+
+[sub_resource type="StandardMaterial3D" id="Mat_crest"]
+albedo_color = Color(0.4, 0.7, 1, 1)
+emission_enabled = true
+emission = Color(0.2, 0.5, 1, 1)
+
+; The Synthetic Heart Rift Summoner. A small pedestal with a status lamp
+; (red off, amber waiting for the server, green open) and a crest on its face.
+[node name="RiftSummoner" type="RigidBody3D"]
+mass = 0.4
+script = ExtResource("1_summoner")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+shape = SubResource("Shape_body")
+
+[node name="Base" type="MeshInstance3D" parent="."]
+mesh = SubResource("Mesh_base")
+surface_material_override/0 = SubResource("Mat_base")
+
+[node name="Lamp" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06, 0)
+mesh = SubResource("Mesh_lamp")
+
+[node name="Crest" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0, -0.062)
+mesh = SubResource("Mesh_crest")
+surface_material_override/0 = SubResource("Mat_crest")
