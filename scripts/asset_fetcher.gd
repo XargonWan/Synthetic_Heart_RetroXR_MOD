@@ -50,6 +50,13 @@ func get_bytes(url_path: String) -> PackedByteArray:
 	return got
 
 
+## The bytes of `url_path` straight from the server, never cached: her voice is a new clip every time.
+func get_fresh(url_path: String) -> PackedByteArray:
+	if base.is_empty() or url_path.is_empty():
+		return PackedByteArray()
+	return await _fetch(base + Protocol.encode_path(url_path))
+
+
 func _cache_path(url_path: String) -> String:
 	var entry: Variant = _manifest.get(url_path)
 	var stamp := str(url_path.md5_text()).substr(0, 10)

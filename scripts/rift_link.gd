@@ -20,6 +20,8 @@ signal closed(reason: String)
 signal action_received(id: int, action: String, payload: Dictionary)
 ## An `assets` answer to request_assets().
 signal assets_received(assets: Dictionary)
+## What Synth's Karada says her avatar is doing: kind ("animation", "audio", "face", ...) and its payload.
+signal karada_received(kind: String, payload: Dictionary)
 
 ## No welcome within this long after the socket opens: give up.
 const WELCOME_TIMEOUT_SEC := 15.0
@@ -124,6 +126,9 @@ func _on_frame(text: String) -> void:
 			_finish("refused:" + str(frame.get("code")))
 		"action":
 			action_received.emit(int(frame.get("id", 0)), String(frame.get("action", "")),
+				frame.get("payload", {}) if frame.get("payload") is Dictionary else {})
+		"karada":
+			karada_received.emit(String(frame.get("kind", "")),
 				frame.get("payload", {}) if frame.get("payload") is Dictionary else {})
 		"assets":
 			assets_received.emit(frame.get("assets", {}) if frame.get("assets") is Dictionary else {})

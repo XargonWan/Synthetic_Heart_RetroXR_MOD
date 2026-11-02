@@ -7,10 +7,9 @@ extends FloatingObjectPanel3D
 
 const PANEL_SCENE := preload("res://mods/xenu.synth_rift/scenes/chat_panel.tscn")
 const NODE_NAME := "ChatPanel"
-## Beside her, on the right of the player, at about her chest.
-const SIDE_DISTANCE := 1.2
-const HEIGHT := 1.25
-const TOWARD_PLAYER := 0.15
+## UNDER her: low in front of her feet, toward the player, where a person looks down to read.
+const HEIGHT := 0.55
+const TOWARD_PLAYER := 0.65
 
 var _body: Node3D = null
 
@@ -72,8 +71,10 @@ func _refresh() -> void:
 		ui.show_lines(_body.chat_lines())
 
 
+## No subject: FloatingObjectPanel3D lifts a panel clear of its subject's box, and this one is
+## meant to hang in front of her legs, which is inside it.
 func _target_node() -> Node3D:
-	return _body
+	return null
 
 
 func _float_height() -> float:
@@ -90,6 +91,4 @@ func _anchor() -> Vector3:
 		to_cam = Vector3(cam.global_position.x - pos.x, 0.0, cam.global_position.z - pos.z)
 	if to_cam.length() < 0.01:
 		to_cam = Vector3(0, 0, 1)
-	to_cam = to_cam.normalized()
-	var right := (-to_cam).cross(Vector3.UP).normalized()
-	return pos + right * SIDE_DISTANCE + to_cam * TOWARD_PLAYER + Vector3(0, HEIGHT, 0)
+	return pos + to_cam.normalized() * TOWARD_PLAYER + Vector3(0, HEIGHT, 0)

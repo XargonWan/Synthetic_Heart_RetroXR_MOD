@@ -57,6 +57,16 @@ SKINS = Path(SYNTH) / "skins"
 app.mount("/skins", StaticFiles(directory=str(SKINS)), name="skins")
 
 
+# Her voice: a real WAV (a second of a rising tone) under /media, the way Vox's clips are served.
+import math, struct, tempfile, wave
+MEDIA = Path(tempfile.mkdtemp(prefix="rift_media_"))
+with wave.open(str(MEDIA / "hello.wav"), "wb") as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+    w.writeframes(b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * (300 + 400 * i / 22050) * i / 22050)))
+                           for i in range(22050)))
+app.mount("/media", StaticFiles(directory=str(MEDIA)), name="media")
+
+
 @app.get("/api/karada/assets/manifest")
 async def _manifest():
     return _build_asset_manifest(SKINS)
@@ -67,8 +77,15 @@ def show(label, res):
 
 
 async def drive():
+    try:
+        await _drive()
+    except Exception:
+        import traceback; print("[synth] DRIVE CRASHED"); traceback.print_exc()
+
+
+async def _drive():
     conn = VESSEL_REGISTRY.load_connector("retroxr")
-    for _ in range(300):
+    for _ in range(900):
         if conn.is_connected:
             break
         await asyncio.sleep(0.1)
@@ -95,6 +112,13 @@ async def drive():
         }
         for what, ok in checks.items():
             print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
+        # Karada: her avatar thinks, then speaks (a real clip from /media), then is idle again.
+        await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "think"}})
+        await asyncio.sleep(2.0)
+        await conn.send_frame({"type": "karada", "kind": "audio", "payload": {
+            "type": "tts-play", "url": "/media/hello.wav", "audio_duration_s": 1.0, "text": "Ciao dal server"}})
+        await asyncio.sleep(2.5)
+        await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "idle"}})
         # The probe types a line to her through the chat page: it must arrive as a player's chat.
         for _ in range(100):
             if any(e.event_type == "chat" for e in EVENTS):

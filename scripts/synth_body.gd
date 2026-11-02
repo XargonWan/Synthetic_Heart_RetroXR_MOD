@@ -11,6 +11,7 @@ extends CharacterBody3D
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
+const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 
 const WALK_SPEED := 1.1
 const ARRIVE_DISTANCE := 0.35
@@ -32,6 +33,13 @@ var _visual: Node3D = null
 var _capsule: MeshInstance3D = null
 var _puppet: Node3D = null
 var _anim_state := ""
+## What Synth's Karada says she is doing (idle, think, write, talk, touch): her body follows it,
+## except while she walks, and again when she stops.
+var _karada_state := "idle"
+var _fetcher: Node = null
+var _voice: AudioStreamPlayer3D = null
+var _voice_queue: Array = []
+var _voice_heard := 0
 var _bubble_left := 0.0
 var _goal: Variant = null  # Vector3 while walking
 var _stuck_for := 0.0
@@ -102,6 +110,15 @@ func _ready() -> void:
 	pointer.add_child(pshape)
 	add_child(pointer)
 
+	# Her voice comes from her head.
+	_voice = AudioStreamPlayer3D.new()
+	_voice.name = "Voice"
+	_voice.unit_size = 3.0
+	_voice.max_distance = 20.0
+	_voice.position = Vector3(0, 1.55, 0)
+	add_child(_voice)
+	_voice.finished.connect(_next_voice)
+
 
 func _physics_process(delta: float) -> void:
 	if _bubble_left > 0.0:
@@ -151,7 +168,7 @@ func _physics_process(delta: float) -> void:
 
 func _end_walk(ok: bool, detail: String) -> void:
 	_goal = null
-	_set_anim("idle")
+	_set_anim(_rest_anim())
 	_stuck_for = 0.0
 	_stuck_sample = 0.0
 	velocity = Vector3.ZERO
@@ -185,6 +202,49 @@ func disappear(seconds: float) -> void:
 	_visual.visible = false
 
 
+## Intangible and half there: no collision (the pod, a rigid body, is pushed by a body that overlaps
+## it, which is how a first summon sent the capsule sliding away) and see-through. She is
+## like this from the moment she arrives until she is actually outside, and again on her way back in.
+const ETHEREAL_FADE := 0.55
+var _ethereal := false
+
+
+func set_ethereal(on: bool) -> void:
+	_ethereal = on
+	collision_layer = 0 if on else 1
+	_set_fade(ETHEREAL_FADE if on else 0.0)
+
+
+func is_ethereal() -> bool:
+	return _ethereal
+
+
+## She becomes solid and opaque, over `seconds`: the moment she is really in the room.
+func materialise(seconds: float) -> void:
+	_ethereal = false
+	var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_method(_set_fade, ETHEREAL_FADE, 0.0, seconds)
+	await tw.finished
+	collision_layer = 1
+
+
+## How see-through she is: 0 solid, 1 gone (dithered per instance; a renderer that ignores it, the
+## Quest's, shows her solid, which is no worse than before).
+func _set_fade(amount: float) -> void:
+	for n: Node in _visual_parts():
+		(n as GeometryInstance3D).transparency = amount
+
+
+func _visual_parts() -> Array:
+	var root: Node = _puppet if _puppet != null else _capsule
+	if root == null:
+		return []
+	var parts: Array = root.find_children("*", "GeometryInstance3D", true, false)
+	if root is GeometryInstance3D:
+		parts.append(root)
+	return parts
+
+
 ## Hidden until she is called out of the capsule.
 func hide_until_summoned() -> void:
 	_visual.visible = false
@@ -203,12 +263,85 @@ func attach_puppet(puppet: Node3D) -> void:
 	_visual = puppet
 	_capsule.visible = false
 	_bubble.position.y = float(puppet.get("height")) + 0.25
-	_set_anim("idle")
+	_set_anim(_rest_anim())
+	if _ethereal:
+		_set_fade(ETHEREAL_FADE)
 	print("[Rift] Synth's own body is on (%.2f m)" % float(puppet.get("height")))
 
 
 func has_puppet() -> bool:
 	return _puppet != null
+
+
+## Her avatar's own states, as Karada tells them (the server owns "what she is doing"): the clip of that
+## name if her skin has it, else standing. A state that is not one of her clips changes nothing.
+func set_karada_state(state: String) -> void:
+	_karada_state = state if not state.is_empty() else "idle"
+	# Walking wins while she walks; _end_walk puts the state back.
+	if _goal == null and _puppet != null:
+		_anim_state = ""
+		_set_anim(_rest_anim())
+
+
+func karada_state() -> String:
+	return _karada_state
+
+
+## The clip she rests in: Karada's state if her skin has it, else standing.
+func _rest_anim() -> String:
+	if _puppet != null and _karada_state != "idle" and bool(_puppet.call("has_clip", _karada_state)):
+		return _karada_state
+	return "idle"
+
+
+## One frame from Karada.
+func on_karada(kind: String, payload: Dictionary) -> void:
+	match kind:
+		"animation":
+			set_karada_state(str(payload.get("state", "idle")))
+		"audio":
+			_hear(payload)
+		_:
+			pass  # the face, the model and the expressions are not drawn yet
+
+
+func set_fetcher(fetcher: Node) -> void:
+	_fetcher = fetcher
+
+
+## Her voice: fetch the clip from the server and play it from her head, in order.
+func _hear(payload: Dictionary) -> void:
+	var url := str(payload.get("url", ""))
+	if url.is_empty() or _fetcher == null:
+		return
+	var bytes: PackedByteArray = await _fetcher.call("get_fresh", url)
+	if not is_inside_tree():
+		return
+	var stream := AudioBytes.stream_from(bytes)
+	if stream == null:
+		print("[Rift] her voice could not be played (%d bytes from %s)" % [bytes.size(), url])
+		return
+	_voice_queue.append(stream)
+	print("[Rift] her voice: %.1f s, \"%s\"" % [AudioBytes.seconds_of(stream), str(payload.get("text", "")).left(60)])
+	if not _voice.playing:
+		_next_voice()
+
+
+func _next_voice() -> void:
+	if _voice_queue.is_empty():
+		return
+	_voice.stream = _voice_queue.pop_front()
+	_voice.play()
+	_voice_heard += 1
+
+
+func is_speaking() -> bool:
+	return _voice != null and _voice.playing
+
+
+## How many clips of her voice have played (the probes count them).
+func voices_played() -> int:
+	return _voice_heard
 
 
 ## What she is doing, as an animation: standing, walking. Names her skin has not got fall back
@@ -228,7 +361,7 @@ func play_once(clip_name: String) -> bool:
 	if _puppet == null or not bool(_puppet.call("has_clip", clip_name)):
 		return false
 	_anim_state = ""
-	return bool(_puppet.call("play_then", clip_name, "idle"))
+	return bool(_puppet.call("play_then", clip_name, _rest_anim()))
 
 
 ## The menu she has, like every object: point at her and press Tab, and write.

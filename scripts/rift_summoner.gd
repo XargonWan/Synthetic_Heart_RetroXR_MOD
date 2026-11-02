@@ -39,7 +39,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.4.0"
+const MOD_VERSION := "0.5.0"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -105,6 +105,8 @@ var _ghost_settle := 0.0
 var _signal_held := false
 ## Her real body, fetched from the server while the pod charges: "" not yet, "loading", "ready", "failed".
 var _assets_state := ""
+var _fetcher: Node = null
+var _karada_state := "idle"
 var _puppet: Node3D = null
 
 ## The state line or the lamp changed: the options menu redraws.
@@ -138,6 +140,7 @@ func _ready() -> void:
 	_link.opened.connect(_on_opened)
 	_link.closed.connect(_on_closed)
 	_link.action_received.connect(_on_action)
+	_link.karada_received.connect(_on_karada)
 	_button.button_pressed.connect(_on_screen_touched)
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
 	# Set it down by aiming at the floor: a yellow rectangle shows where it will stand.
@@ -316,6 +319,12 @@ func _begin_summon() -> void:
 	_link_ready = false
 	_assets_state = ""
 	_free_puppet()
+	_free_fetcher()
+	_fetcher = AssetFetcher.new()
+	_fetcher.name = "AssetFetcher"
+	add_child(_fetcher)
+	_fetcher.call("setup", server, str(settings.get("token", "")))
+	_karada_state = "idle"
 	_set_phase(Phase.CHARGING)
 	_set_status("Connecting to %s ..." % server, false)
 	_show_charging()
@@ -383,11 +392,15 @@ func _arrive() -> void:
 	if not _spawn_body():
 		_abort("no_body", true)
 		return
+	_body.set_fetcher(_fetcher)
 	if _puppet != null and _assets_state == "ready":
+		_body.set_karada_state(_karada_state)
 		_body.attach_puppet(_puppet)
 		_puppet = null
 	elif _assets_state == "failed":
 		print("[Rift] her own body could not be loaded: she arrives as a capsule")
+	# Intangible and half there until she is actually out of the pod.
+	_body.set_ethereal(true)
 	_body.hide_until_summoned()
 	await _body.appear(0.7)
 	if not _still_arriving():
@@ -395,6 +408,11 @@ func _arrive() -> void:
 	# Step out of the capsule, to its front, and turn to the player.
 	var out := _floor_below(global_position + (global_basis.z * STEP_OUT))
 	await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
+	if not _still_arriving():
+		return
+	# Out of the pod: only now does she become solid.
+	_flash()
+	await _body.materialise(0.5)
 	if not _still_arriving():
 		return
 	await _body.act("look", {"target": "player"})
@@ -408,6 +426,14 @@ func _arrive() -> void:
 	_set_status("Open: Synth is in the room. Point at her and press Tab to talk.", true)
 	_screen_text("ONLINE")
 	_tell_synth_she_was_summoned()
+
+
+## Synth's Karada: what her avatar is doing, and what she says aloud.
+func _on_karada(kind: String, payload: Dictionary) -> void:
+	if kind == "animation":
+		_karada_state = str(payload.get("state", "idle"))
+	if _body != null and is_instance_valid(_body):
+		_body.on_karada(kind, payload)
 
 
 ## The player wrote to her through the chat page.
@@ -443,6 +469,7 @@ func _dismiss() -> void:
 	_screen_text("LEAVING")
 	_play(_sfx, "leave")
 	if _body != null and is_instance_valid(_body):
+		_body.set_ethereal(true)   # into the pod: it is not shoved aside on the way in
 		var home := _floor_below(global_position)
 		await _body.act("move", {"x": home.x, "y": home.y, "z": home.z})
 		if _body != null and is_instance_valid(_body):
@@ -455,6 +482,7 @@ func _dismiss() -> void:
 func _close(reason: String) -> void:
 	_link.close_rift(reason)
 	_remove_body()
+	_free_fetcher()
 	_stop(_hum)
 	_set_phase(Phase.IDLE)
 	_set_status("Off" if reason == "switched_off" else _reason_text(reason), false)
@@ -466,6 +494,7 @@ func _abort(reason: String, with_sound: bool) -> void:
 	print("[Rift] summon ended: %s" % reason)
 	_link.close_rift(reason)
 	_remove_body()
+	_free_fetcher()
 	_stop(_hum)
 	_stop(_sfx)
 	if with_sound:
@@ -483,6 +512,7 @@ func _on_closed(reason: String) -> void:
 	if _phase == Phase.IDLE:
 		return
 	_remove_body()
+	_free_fetcher()
 	_stop(_hum)
 	_stop(_sfx)
 	_play(_sfx, "fizzle")
@@ -526,14 +556,11 @@ func _load_body(assets: Dictionary) -> void:
 	_assets_state = "loading"
 	var model: Dictionary = assets.get("model", {}) if assets.get("model") is Dictionary else {}
 	var model_url := str(model.get("url", ""))
-	if model_url.is_empty():
+	if model_url.is_empty() or _fetcher == null:
 		print("[Rift] the server named no model for her: capsule")
 		_assets_state = "failed"
 		return
-	var settings: Dictionary = RiftSettings.load_settings()
-	var fetcher: Node = AssetFetcher.new()
-	add_child(fetcher)
-	fetcher.call("setup", RiftSettings.server_of(settings), str(settings.get("token", "")))
+	var fetcher := _fetcher
 	_set_status("Rift open: loading Synth's body ...", false)
 	var vrm: PackedByteArray = await fetcher.call("get_bytes", model_url)
 	if not _loading_still_wanted(fetcher):
@@ -543,7 +570,6 @@ func _load_body(assets: Dictionary) -> void:
 	add_child(puppet)
 	if vrm.is_empty() or not bool(puppet.call("load_model", vrm)):
 		puppet.queue_free()
-		fetcher.queue_free()
 		_assets_state = "failed"
 		return
 	var anims: Dictionary = assets.get("animations", {}) if assets.get("animations") is Dictionary else {}
@@ -557,7 +583,6 @@ func _load_body(assets: Dictionary) -> void:
 			return
 		if not bytes.is_empty():
 			puppet.call("add_clip", clip_name, bytes)
-	fetcher.queue_free()
 	_puppet = puppet
 	_assets_state = "ready"
 	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str(anims.keys())])
@@ -569,8 +594,6 @@ func _loading_still_wanted(fetcher: Node, puppet: Node = null) -> bool:
 	if _phase == Phase.CHARGING or _phase == Phase.ARRIVING:
 		return true
 	print("[Rift] summon ended while her body was loading: dropped")
-	if is_instance_valid(fetcher):
-		fetcher.queue_free()
 	if puppet != null and is_instance_valid(puppet):
 		puppet.queue_free()
 	_assets_state = ""
@@ -610,6 +633,12 @@ func _remove_body(and_puppet: bool = true) -> void:
 		_free_puppet()
 
 
+func _free_fetcher() -> void:
+	if _fetcher != null and is_instance_valid(_fetcher):
+		_fetcher.queue_free()
+	_fetcher = null
+
+
 func _free_puppet() -> void:
 	if _puppet != null and is_instance_valid(_puppet):
 		_puppet.queue_free()
@@ -645,6 +674,8 @@ func _entities() -> Array:
 		var label: Variant = n3.get("display_name")
 		var shown := str(label) if label is String and not String(label).is_empty() else str(n3.name)
 		entry["label"] = shown.substr(0, shown.find("@")) if shown.contains("@") else shown
+		if n3.has_method("is_powered_on"):
+			entry["powered"] = bool(n3.call("is_powered_on"))
 		var sid: Variant = n3.get("systemid")
 		if sid is String and not String(sid).is_empty():
 			entry["systemid"] = sid

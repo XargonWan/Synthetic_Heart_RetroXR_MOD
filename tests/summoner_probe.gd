@@ -33,6 +33,11 @@ var _dismissing := false
 var _early_touch_done := false
 var _saw_synth_line := false
 var _chat_done := false
+var _pod_at := Vector3.ZERO
+var _saw_think := false
+var _saw_voice := false
+var _saw_idle_again := false
+var _was_ethereal := false
 var _done := false
 
 
@@ -222,6 +227,10 @@ func _menu_then_open() -> void:
 	var saved: Dictionary = JsonStore.read_dict("user://mods/xenu.synth_rift/settings.json", "xenu.synth_rift")
 	_check(saved.get("server") == server and saved.get("token") == "s3cret", "typing in the menu saves the settings")
 
+	# The pod is NOT frozen from here on: a body that overlaps a rigid pod pushes it, and that
+	# is the very thing this must not do (it slid away when she stepped out).
+	_summoner.freeze = false
+	_pod_at = _summoner.global_position
 	if _expect == "dismiss":
 		# Summon with the menu's own button this time.
 		ui._power.pressed.emit()
@@ -267,11 +276,24 @@ func _process(delta: float) -> void:
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
 		# The floor is at y = 0 and the capsule's centre at 0.3: she stands on the floor, not on the capsule.
 		_check(absf(body.global_position.y) < 0.05, "she stands on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
+	# Karada drives her: think while the avatar thinks, her voice from her head, idle again after.
+	if body != null and body.has_puppet():
+		if body.karada_state() == "think" and body._puppet.playing() == "think":
+			_saw_think = true
+		if body.voices_played() >= 1:
+			_saw_voice = true
+		if _saw_think and body.karada_state() == "idle" and body._puppet.playing() == "idle":
+			_saw_idle_again = true
 	# What Synth says lands in the chat log (the harness makes her say a line once she is out).
 	if body != null and not _saw_synth_line:
 		for line: Dictionary in body.chat_lines():
 			if line["who"] == "synth":
 				_saw_synth_line = true
+	# Intangible while she is inside the pod and walking out of it, solid once she is out.
+	if body != null and _summoner.phase() == 2 and body.is_ethereal():
+		_was_ethereal = true
+		_check(body.collision_layer == 0, "she has no collision while she steps out")
+		_check(_summoner.global_position.distance_to(_pod_at) < 0.03, "the pod stays where it stood (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
 	if _summoner.phase() == 2 and not _checked_arriving:
 		_checked_arriving = true
 		_check(_summoner._sfx.stream == Sounds.stream("arrive"), "the arrival sound plays")
@@ -286,6 +308,9 @@ func _process(delta: float) -> void:
 		_check(body != null and _flat_distance(body, _summoner) > 0.9,
 			"she has stepped out of the capsule (%.2f m)" % _flat_distance(body, _summoner))
 		_check(_summoner.phase() == 3, "it is OPEN")
+		_check(_was_ethereal, "she was intangible on the way out")
+		_check(not body.is_ethereal() and body.collision_layer == 1, "and is solid now she is out")
+		_check(_summoner.global_position.distance_to(_pod_at) < 0.05, "the pod never moved (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
 		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to her (%s)" % _menu_ui._status.text)
 		_chat_roundtrip(body)
 		# Her own body, from her skin: the model and the animations were fetched from the server.
@@ -335,6 +360,9 @@ func _process(delta: float) -> void:
 		_check(_screen_is_red(), "the screen is red again")
 		_check(_saw_cyan, "the screen was cyan while open")
 		_check(_saw_synth_line, "what Synth said reached the chat log")
+		_check(_saw_think, "her body played the think clip when Karada said think")
+		_check(_saw_voice, "her voice (a WAV from the server) was played from her head")
+		_check(_saw_idle_again, "and she went back to idle when Karada did")
 		_check(_menu_ui._status.text == "Synth left the room", "the menu says why it closed (got '%s')" % _menu_ui._status.text)
 		_check(_phases.slice(0, 5) == [1, 2, 3, 0], "the phases went CHARGING, ARRIVING, OPEN, IDLE (%s)" % str(_phases))
 		_finish("closed by Synth")
@@ -369,7 +397,11 @@ func _chat_roundtrip(body: Node3D) -> void:
 	if panel == null:
 		return
 	var rel: Vector3 = panel.global_position - body.global_position
-	_check(Vector2(rel.x, rel.z).length() > 0.7 and rel.y > 0.9 and rel.y < 1.7, "beside her at chest height (%.2f m, %.2f up)" % [Vector2(rel.x, rel.z).length(), rel.y])
+	var toward: Vector3 = (_camera.global_position - body.global_position)
+	toward.y = 0.0
+	_check(rel.y > 0.3 and rel.y < 0.9, "under her, low, not over her shoulder (%.2f m up)" % rel.y)
+	_check(Vector2(rel.x, rel.z).normalized().dot(Vector2(toward.x, toward.z).normalized()) > 0.9 and Vector2(rel.x, rel.z).length() > 0.4,
+		"in front of her, toward the player (%.2f m)" % Vector2(rel.x, rel.z).length())
 	var ui: Control = panel._get_ui()
 	_check(ui != null, "the chat page loaded")
 	if ui == null:
