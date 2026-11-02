@@ -17,7 +17,7 @@ const WORLD_VERBS: Array[String] = [
 	"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
 ]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
-const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet"]
+const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet", "write", "computer", "touch"]
 
 
 static func is_known_verb(verb: String) -> bool:
@@ -45,6 +45,30 @@ static func socket_url(server: String, token: String = "") -> String:
 	if not token.is_empty():
 		url += "?token=" + token.uri_encode()
 	return url
+
+
+## Where the same server answers plain requests: "https://host:8000/" or "wss://host:8000" ->
+## "https://host:8000"; "host:8080", "http://host:8080" or "ws://host:8080" -> "http://host:8080".
+static func http_base(server: String) -> String:
+	var s := server.strip_edges()
+	if s.is_empty():
+		return ""
+	var secure := s.begins_with("https://") or s.begins_with("wss://")
+	if s.contains("://"):
+		s = s.substr(s.find("://") + 3)
+	s = s.rstrip("/")
+	if s.contains("/"):
+		s = s.substr(0, s.find("/"))
+	return ("https://" if secure else "http://") + s if not s.is_empty() else ""
+
+
+## A path with each segment percent-encoded and the slashes kept: "/skins/My Skin/a b.fbx".
+static func encode_path(path: String) -> String:
+	var parts := path.split("/")
+	var out: PackedStringArray = []
+	for part: String in parts:
+		out.append(part.uri_encode())
+	return "/".join(out)
 
 
 ## The host part of a socket URL ("wss://synth.local:8000/x?t=1" -> "synth.local").

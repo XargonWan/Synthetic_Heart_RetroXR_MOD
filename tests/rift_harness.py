@@ -48,6 +48,19 @@ core_initializer.PLUGIN_REGISTRY["vessel_plugin"] = FakePlugin()
 app = FastAPI()
 app.include_router(vessel_retroxr_api.create_retroxr_router())
 
+# What the mod downloads her body from: the real Karada skin files and their hash manifest,
+# served the way Synth does (/skins static, /api/karada/assets/manifest).
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from core.karada_api import _build_asset_manifest
+SKINS = Path(SYNTH) / "skins"
+app.mount("/skins", StaticFiles(directory=str(SKINS)), name="skins")
+
+
+@app.get("/api/karada/assets/manifest")
+async def _manifest():
+    return _build_asset_manifest(SKINS)
+
 
 def show(label, res):
     print(f"[synth] {label}: ok={res.ok} detail={res.detail!r} data={res.data}")
@@ -82,6 +95,15 @@ async def drive():
         }
         for what, ok in checks.items():
             print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
+        # The probe types a line to her through the chat page: it must arrive as a player's chat.
+        for _ in range(100):
+            if any(e.event_type == "chat" for e in EVENTS):
+                break
+            await asyncio.sleep(0.1)
+        chats = [e for e in EVENTS if e.event_type == "chat"]
+        ok = bool(chats) and chats[0].actor == "player" and chats[0].summary == "player: ciao Rei, mi senti?" \
+            and chats[0].salience == 1.0 and (chats[0].data or {}).get("addressed") is True
+        print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} chat: a player's line, addressed to her ({chats[0].summary if chats else 'none'!r})")
         if os.environ.get("PROBE_EXPECT") == "dismiss":
             return  # the probe sends her back itself
     await asyncio.sleep(1.2)

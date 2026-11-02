@@ -18,6 +18,7 @@ func _init() -> void:
 	_frames()
 	_points()
 	_tls()
+	_http()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
@@ -109,3 +110,16 @@ func _tls() -> void:
 	# The whole path from what a player types, the way the Summoner builds it.
 	_check(Protocol.trusts_unverified_tls(Protocol.socket_url("https://localhost:8000/")), "https://localhost:8000/ ends up trusted")
 	_eq(Protocol.socket_url("https://localhost:8000/", ""), "wss://localhost:8000/api/vessel/retroxr/ws", "and an empty password adds no token")
+
+
+## Where the skin's files are fetched from: the same server as the socket.
+func _http() -> void:
+	_eq(Protocol.http_base("https://localhost:8000/"), "https://localhost:8000", "https keeps its scheme")
+	_eq(Protocol.http_base("wss://synth.local:9"), "https://synth.local:9", "wss is https")
+	_eq(Protocol.http_base("192.168.1.5:8080"), "http://192.168.1.5:8080", "a bare address is http")
+	_eq(Protocol.http_base("ws://h:1/api/x"), "http://h:1", "a path is dropped")
+	_eq(Protocol.http_base(""), "", "empty")
+	_eq(Protocol.http_base("http://"), "", "a scheme alone")
+	_eq(Protocol.encode_path("/skins/Rei/animations/greet/Standing Greeting.fbx"),
+		"/skins/Rei/animations/greet/Standing%20Greeting.fbx", "spaces are encoded, slashes are not")
+	_eq(Protocol.encode_path("/skins/Rei/model.vrm"), "/skins/Rei/model.vrm", "a plain path is untouched")

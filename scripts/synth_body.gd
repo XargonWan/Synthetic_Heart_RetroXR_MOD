@@ -10,6 +10,7 @@
 extends CharacterBody3D
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
+const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
 
 const WALK_SPEED := 1.1
 const ARRIVE_DISTANCE := 0.35
@@ -27,7 +28,10 @@ const BUBBLE_SECONDS_PER_CHAR := 0.07
 var anchor: Vector3 = Vector3.ZERO
 
 var _bubble: Label3D = null
-var _visual: MeshInstance3D = null
+var _visual: Node3D = null
+var _capsule: MeshInstance3D = null
+var _puppet: Node3D = null
+var _anim_state := ""
 var _bubble_left := 0.0
 var _goal: Variant = null  # Vector3 while walking
 var _stuck_for := 0.0
@@ -36,6 +40,13 @@ var _last_pos := Vector3.ZERO
 var _walk_elapsed := 0.0
 var _walk_result: Dictionary = {}
 signal _walk_finished
+## Something was said, by the player or by her: the chat page redraws.
+signal chat_changed
+## The player wrote this to her: the Summoner sends it to Synth.
+signal chat_sent(text: String)
+
+const MAX_CHAT := 60
+var _chat: Array = []
 
 
 func _ready() -> void:
@@ -47,6 +58,7 @@ func _ready() -> void:
 	capsule.position.y = 0.775
 	capsule.name = "Visual"
 	_visual = capsule
+	_capsule = capsule
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.55, 0.78, 1.0)
 	mat.emission_enabled = true
@@ -65,16 +77,30 @@ func _ready() -> void:
 
 	_bubble = Label3D.new()
 	_bubble.position = Vector3(0, 1.85, 0)
-	_bubble.pixel_size = 0.003
-	_bubble.font_size = 48
-	_bubble.outline_size = 12
+	_bubble.pixel_size = 0.0016
+	_bubble.font_size = 44
+	_bubble.outline_size = 10
 	_bubble.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_bubble.no_depth_test = true
 	_bubble.visible = false
-	_bubble.width = 900
+	_bubble.width = 700
 	_bubble.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_bubble)
 	_last_pos = global_position
+
+	# Point at her and press Tab (the left thumbstick) to write to her: this is what the ray finds.
+	var pointer := StaticBody3D.new()
+	pointer.name = "PointerArea"
+	pointer.collision_layer = 1 << 20
+	pointer.collision_mask = 0
+	var pshape := CollisionShape3D.new()
+	var pcyl := CylinderShape3D.new()
+	pcyl.radius = 0.38
+	pcyl.height = 1.75
+	pshape.shape = pcyl
+	pshape.position.y = 0.875
+	pointer.add_child(pshape)
+	add_child(pointer)
 
 
 func _physics_process(delta: float) -> void:
@@ -94,6 +120,7 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	_set_anim("walk")
 	var goal: Vector3 = _goal
 	var to_goal := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
 	_walk_elapsed += delta
@@ -124,6 +151,7 @@ func _physics_process(delta: float) -> void:
 
 func _end_walk(ok: bool, detail: String) -> void:
 	_goal = null
+	_set_anim("idle")
 	_stuck_for = 0.0
 	_stuck_sample = 0.0
 	velocity = Vector3.ZERO
@@ -137,20 +165,22 @@ func _end_walk(ok: bool, detail: String) -> void:
 func appear(seconds: float) -> void:
 	_visual.scale = Vector3(0.05, 0.02, 0.05)
 	_visual.visible = true
-	var mat := _visual.mesh.material as StandardMaterial3D
-	mat.emission_energy_multiplier = 3.0
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_visual, "scale", Vector3.ONE, seconds)
-	tw.tween_property(mat, "emission_energy_multiplier", 0.4, seconds * 1.4)
+	if _puppet == null:
+		var mat := _capsule.mesh.material as StandardMaterial3D
+		mat.emission_energy_multiplier = 3.0
+		tw.tween_property(mat, "emission_energy_multiplier", 0.4, seconds * 1.4)
 	await tw.finished
 
 
 ## The reverse: it shrinks into the floor and is gone.
 func disappear(seconds: float) -> void:
-	var mat := _visual.mesh.material as StandardMaterial3D
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_property(_visual, "scale", Vector3(0.05, 0.02, 0.05), seconds)
-	tw.tween_property(mat, "emission_energy_multiplier", 3.0, seconds)
+	if _puppet == null:
+		var mat := _capsule.mesh.material as StandardMaterial3D
+		tw.tween_property(mat, "emission_energy_multiplier", 3.0, seconds)
 	await tw.finished
 	_visual.visible = false
 
@@ -158,6 +188,72 @@ func disappear(seconds: float) -> void:
 ## Hidden until she is called out of the capsule.
 func hide_until_summoned() -> void:
 	_visual.visible = false
+
+
+## Her real body (a KaradaPuppet, loaded from her skin) in place of the capsule. It stands on the
+## floor, faces -Z like this body does, and the speech bubble moves up to her head.
+func attach_puppet(puppet: Node3D) -> void:
+	if puppet.get_parent() != null:
+		puppet.reparent(self, false)
+	else:
+		add_child(puppet)
+	puppet.position = Vector3.ZERO
+	puppet.rotation = Vector3.ZERO
+	_puppet = puppet
+	_visual = puppet
+	_capsule.visible = false
+	_bubble.position.y = float(puppet.get("height")) + 0.25
+	_set_anim("idle")
+	print("[Rift] Synth's own body is on (%.2f m)" % float(puppet.get("height")))
+
+
+func has_puppet() -> bool:
+	return _puppet != null
+
+
+## What she is doing, as an animation: standing, walking. Names her skin has not got fall back
+## to standing (her body then slides, which is still better than a stiff pose).
+func _set_anim(state: String) -> void:
+	if _puppet == null or state == _anim_state:
+		return
+	_anim_state = state
+	if _puppet.has_method("has_clip") and bool(_puppet.call("has_clip", state)):
+		_puppet.call("play", state, true)
+	elif state != "idle" and bool(_puppet.call("has_clip", "idle")):
+		_puppet.call("play", "idle", true)
+
+
+## A one-off animation from her skin, then standing again. False when her skin has not got it.
+func play_once(clip_name: String) -> bool:
+	if _puppet == null or not bool(_puppet.call("has_clip", clip_name)):
+		return false
+	_anim_state = ""
+	return bool(_puppet.call("play_then", clip_name, "idle"))
+
+
+## The menu she has, like every object: point at her and press Tab, and write.
+func toggle_options_ui(camera: Node3D) -> void:
+	ChatPanel.toggle_for(self, camera)
+
+
+func chat_lines() -> Array:
+	return _chat
+
+
+## The player wrote to her (the page's Send): kept in the log and handed on.
+func send_chat(text: String) -> void:
+	var t := text.strip_edges()
+	if t.is_empty():
+		return
+	_log_chat("you", t)
+	chat_sent.emit(t)
+
+
+func _log_chat(who: String, text: String) -> void:
+	_chat.append({"who": who, "text": text})
+	if _chat.size() > MAX_CHAT:
+		_chat = _chat.slice(_chat.size() - MAX_CHAT)
+	chat_changed.emit()
 
 
 func say_bubble(text: String) -> void:
@@ -174,6 +270,7 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 			if text.is_empty():
 				return {"ok": false, "detail": "empty_text"}
 			say_bubble(text)
+			_log_chat("synth", text)
 			return {"ok": true, "detail": "spoken"}
 		"status":
 			return {"ok": true, "data": {"position": Protocol.vec(global_position)}}
@@ -181,6 +278,13 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 			return _look(payload)
 		"move":
 			return await _move(payload)
+		"emote":
+			var clip := str(payload.get("name", "")).strip_edges()
+			if clip.is_empty():
+				return {"ok": false, "detail": "no_name"}
+			if play_once(clip):
+				return {"ok": true, "detail": "playing " + clip}
+			return {"ok": false, "detail": "no_such_animation: " + clip}
 		_:
 			print("[Rift] verb %s is not built yet" % action)
 			return {"ok": false, "detail": "not_implemented_yet: " + action}

@@ -31,6 +31,8 @@ var _checked_charging := false
 var _checked_arriving := false
 var _dismissing := false
 var _early_touch_done := false
+var _saw_synth_line := false
+var _chat_done := false
 var _done := false
 
 
@@ -265,6 +267,11 @@ func _process(delta: float) -> void:
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
 		# The floor is at y = 0 and the capsule's centre at 0.3: she stands on the floor, not on the capsule.
 		_check(absf(body.global_position.y) < 0.05, "she stands on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
+	# What Synth says lands in the chat log (the harness makes her say a line once she is out).
+	if body != null and not _saw_synth_line:
+		for line: Dictionary in body.chat_lines():
+			if line["who"] == "synth":
+				_saw_synth_line = true
 	if _summoner.phase() == 2 and not _checked_arriving:
 		_checked_arriving = true
 		_check(_summoner._sfx.stream == Sounds.stream("arrive"), "the arrival sound plays")
@@ -279,6 +286,17 @@ func _process(delta: float) -> void:
 		_check(body != null and _flat_distance(body, _summoner) > 0.9,
 			"she has stepped out of the capsule (%.2f m)" % _flat_distance(body, _summoner))
 		_check(_summoner.phase() == 3, "it is OPEN")
+		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to her (%s)" % _menu_ui._status.text)
+		_chat_roundtrip(body)
+		# Her own body, from her skin: the model and the animations were fetched from the server.
+		_check(body.has_puppet(), "she wears her own body (Rei's VRM), not the capsule")
+		if body.has_puppet():
+			var puppet: Node3D = body._puppet
+			_check(puppet.mapped_bones() > 40, "her animations are bound to her bones (%d)" % puppet.mapped_bones())
+			_check(puppet.has_clip("idle") and puppet.has_clip("greet"), "her idle and greeting arrived")
+			_check(puppet.height > 1.4 and puppet.height < 1.9, "she is a person's height (%.2f m)" % puppet.height)
+			_check(not body._capsule.visible, "the capsule is hidden")
+			_check(puppet.playing() in ["greet", "idle"], "she is playing an animation (%s)" % puppet.playing())
 		# She faces the player: the camera is at -X/-Z of her.
 		var fwd: Vector3 = -body.global_basis.z
 		var to_cam: Vector3 = (_camera.global_position - body.global_position)
@@ -316,12 +334,52 @@ func _process(delta: float) -> void:
 			_summoner.get_parent().get_node("SynthBody").is_queued_for_deletion(), "the body goes when the rift closes")
 		_check(_screen_is_red(), "the screen is red again")
 		_check(_saw_cyan, "the screen was cyan while open")
+		_check(_saw_synth_line, "what Synth said reached the chat log")
 		_check(_menu_ui._status.text == "Synth left the room", "the menu says why it closed (got '%s')" % _menu_ui._status.text)
 		_check(_phases.slice(0, 5) == [1, 2, 3, 0], "the phases went CHARGING, ARRIVING, OPEN, IDLE (%s)" % str(_phases))
 		_finish("closed by Synth")
 	elif _t > 60.0:
 		_check(false, "timeout (phase %d, status '%s')" % [_summoner.phase(), _summoner.status_text()])
 		_finish("timeout")
+
+
+## Talking to her: point at HER (the ray Tab uses finds her, not the pod), open her page, write.
+func _chat_roundtrip(body: Node3D) -> void:
+	if _chat_done:
+		return
+	_chat_done = true
+	var at: Vector3 = body.global_position + Vector3(0, 1.0, 0)
+	var q := PhysicsRayQueryParameters3D.create(at + Vector3(2.0, 0, 0), at + Vector3(-2.0, 0, 0))
+	q.collision_mask = 1 << 20
+	q.collide_with_bodies = true
+	var hit: Dictionary = body.get_world_3d().direct_space_state.intersect_ray(q)
+	var node: Node = hit.get("collider") as Node
+	var host: Node = null
+	while node != null:
+		if node.has_method("toggle_options_ui"):
+			host = node
+			break
+		node = node.get_parent()
+	_check(host == body, "the Tab ray, aimed at her, finds HER and not the pod")
+	body.toggle_options_ui(_camera)
+	for i in 6:
+		await get_tree().process_frame
+	var panel := body.get_node_or_null("ChatPanel")
+	_check(panel != null and panel.visible, "her chat page opens")
+	if panel == null:
+		return
+	var rel: Vector3 = panel.global_position - body.global_position
+	_check(Vector2(rel.x, rel.z).length() > 0.7 and rel.y > 0.9 and rel.y < 1.7, "beside her at chest height (%.2f m, %.2f up)" % [Vector2(rel.x, rel.z).length(), rel.y])
+	var ui: Control = panel._get_ui()
+	_check(ui != null, "the chat page loaded")
+	if ui == null:
+		return
+	ui._edit.text = "ciao Rei, mi senti?"
+	ui._send()
+	_check(body.chat_lines().size() >= 1 and body.chat_lines()[-1]["who"] == "you", "what is written is kept in the log")
+	await get_tree().process_frame
+	_check(ui._log.get_parsed_text().contains("ciao Rei"), "and shown on the page")
+	_check(ui._edit.text == "", "the field is emptied")
 
 
 func _finish(what: String) -> void:

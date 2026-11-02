@@ -33,9 +33,13 @@ const RiftOptionsPanel := preload("res://mods/xenu.synth_rift/scripts/rift_optio
 const SummonerModel := preload("res://mods/xenu.synth_rift/scripts/summoner_model.gd")
 const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sounds.gd")
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
+const AssetFetcher := preload("res://mods/xenu.synth_rift/scripts/asset_fetcher.gd")
+const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
-const MOD_VERSION := "0.3.1"
+## What Synth calls the player: they have no profile in a room.
+const PLAYER_NAME := "player"
+const MOD_VERSION := "0.4.0"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -99,6 +103,9 @@ var _ghost_mats: Array = []
 var _ghost_on := false
 var _ghost_settle := 0.0
 var _signal_held := false
+## Her real body, fetched from the server while the pod charges: "" not yet, "loading", "ready", "failed".
+var _assets_state := ""
+var _puppet: Node3D = null
 
 ## The state line or the lamp changed: the options menu redraws.
 signal status_changed
@@ -307,6 +314,8 @@ func _begin_summon() -> void:
 	print("[Rift] summoning (room=%s)" % _room_id())
 	_charge_t = 0.0
 	_link_ready = false
+	_assets_state = ""
+	_free_puppet()
 	_set_phase(Phase.CHARGING)
 	_set_status("Connecting to %s ..." % server, false)
 	_show_charging()
@@ -330,6 +339,7 @@ func _on_opened(welcome: Dictionary) -> void:
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
 	_set_status("Rift open: charging ...", false)
+	_load_body(assets)
 
 
 func _process(delta: float) -> void:
@@ -337,7 +347,7 @@ func _process(delta: float) -> void:
 		Phase.CHARGING:
 			_charge_t += delta
 			_animate_charge()
-			if _link_ready and _charge_t >= charge_seconds:
+			if _link_ready and _charge_t >= charge_seconds and _assets_state != "loading":
 				_arrive()
 		Phase.OPEN:
 			_open_t += delta
@@ -373,6 +383,11 @@ func _arrive() -> void:
 	if not _spawn_body():
 		_abort("no_body", true)
 		return
+	if _puppet != null and _assets_state == "ready":
+		_body.attach_puppet(_puppet)
+		_puppet = null
+	elif _assets_state == "failed":
+		print("[Rift] her own body could not be loaded: she arrives as a capsule")
 	_body.hide_until_summoned()
 	await _body.appear(0.7)
 	if not _still_arriving():
@@ -385,13 +400,23 @@ func _arrive() -> void:
 	await _body.act("look", {"target": "player"})
 	if not _still_arriving():
 		return
+	_body.play_once("greet")
 	_open_t = 0.0
 	_pulse = 0.0
 	_beam.scale = Vector3.ONE
 	_set_phase(Phase.OPEN)
-	_set_status("Open: Synth is in the room", true)
+	_set_status("Open: Synth is in the room. Point at her and press Tab to talk.", true)
 	_screen_text("ONLINE")
 	_tell_synth_she_was_summoned()
+
+
+## The player wrote to her through the chat page.
+func _on_player_wrote(text: String) -> void:
+	if _link == null or not _link.is_open():
+		return
+	_link.send_frame(Protocol.event("chat", "%s: %s" % [PLAYER_NAME, text], PLAYER_NAME, 1.0,
+		{"message": text, "addressed": true}))
+	print("[Rift] the player wrote: %s" % text)
 
 
 func _still_arriving() -> bool:
@@ -493,10 +518,70 @@ func _on_action(id: int, action: String, payload: Dictionary) -> void:
 	await RiftDispatch.handle(_body, _link, id, action, payload)
 
 
+# ── her real body ────────────────────────────────────────────────────────────
+
+## Fetch her skin from the server (the model, then every animation the server named) while the
+## pod charges, and build the puppet. The capsule stays her body if any of it fails.
+func _load_body(assets: Dictionary) -> void:
+	_assets_state = "loading"
+	var model: Dictionary = assets.get("model", {}) if assets.get("model") is Dictionary else {}
+	var model_url := str(model.get("url", ""))
+	if model_url.is_empty():
+		print("[Rift] the server named no model for her: capsule")
+		_assets_state = "failed"
+		return
+	var settings: Dictionary = RiftSettings.load_settings()
+	var fetcher: Node = AssetFetcher.new()
+	add_child(fetcher)
+	fetcher.call("setup", RiftSettings.server_of(settings), str(settings.get("token", "")))
+	_set_status("Rift open: loading Synth's body ...", false)
+	var vrm: PackedByteArray = await fetcher.call("get_bytes", model_url)
+	if not _loading_still_wanted(fetcher):
+		return
+	var puppet: Node3D = KaradaPuppet.new()
+	puppet.visible = false
+	add_child(puppet)
+	if vrm.is_empty() or not bool(puppet.call("load_model", vrm)):
+		puppet.queue_free()
+		fetcher.queue_free()
+		_assets_state = "failed"
+		return
+	var anims: Dictionary = assets.get("animations", {}) if assets.get("animations") is Dictionary else {}
+	for clip_name: String in anims:
+		var entry: Variant = anims[clip_name]
+		var clips: Array = (entry as Dictionary).get("clips", []) if entry is Dictionary else []
+		if clips.is_empty() or not (clips[0] is Dictionary):
+			continue
+		var bytes: PackedByteArray = await fetcher.call("get_bytes", str((clips[0] as Dictionary).get("url", "")))
+		if not _loading_still_wanted(fetcher, puppet):
+			return
+		if not bytes.is_empty():
+			puppet.call("add_clip", clip_name, bytes)
+	fetcher.queue_free()
+	_puppet = puppet
+	_assets_state = "ready"
+	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str(anims.keys())])
+	_set_status("Rift open: charging ...", false)
+
+
+## False (and everything put away) when the summon was called off while a download ran.
+func _loading_still_wanted(fetcher: Node, puppet: Node = null) -> bool:
+	if _phase == Phase.CHARGING or _phase == Phase.ARRIVING:
+		return true
+	print("[Rift] summon ended while her body was loading: dropped")
+	if is_instance_valid(fetcher):
+		fetcher.queue_free()
+	if puppet != null and is_instance_valid(puppet):
+		puppet.queue_free()
+	_assets_state = ""
+	return false
+
+
 # ── the body ─────────────────────────────────────────────────────────────────
 
 func _spawn_body() -> bool:
-	_remove_body()
+	# Not her loaded body: that is what this is about to be put on.
+	_remove_body(false)
 	var host: Node = get_parent()
 	if host == null:
 		print("[Rift] summoner has no parent to put the body in")
@@ -506,6 +591,7 @@ func _spawn_body() -> bool:
 	var floor_spot := _floor_below(global_position)
 	_body = SynthBody.new()
 	_body.name = "SynthBody"
+	_body.chat_sent.connect(_on_player_wrote)
 	_body.anchor = global_position
 	host.add_child(_body)
 	# Inside the pod, facing out of its front.
@@ -516,10 +602,18 @@ func _spawn_body() -> bool:
 	return true
 
 
-func _remove_body() -> void:
+func _remove_body(and_puppet: bool = true) -> void:
 	if _body != null and is_instance_valid(_body):
 		_body.queue_free()
 	_body = null
+	if and_puppet:
+		_free_puppet()
+
+
+func _free_puppet() -> void:
+	if _puppet != null and is_instance_valid(_puppet):
+		_puppet.queue_free()
+	_puppet = null
 
 
 ## The floor under `point` (the first collider straight down), or `point` if none.

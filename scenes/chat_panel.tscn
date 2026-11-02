@@ -1,0 +1,15 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://mods/xenu.synth_rift/scripts/chat_panel.gd" id="1_panel"]
+[ext_resource type="PackedScene" uid="uid://clujaf3u776a3" path="res://addons/godot-xr-tools/objects/viewport_2d_in_3d.tscn" id="2_vp"]
+[ext_resource type="PackedScene" path="res://mods/xenu.synth_rift/scenes/chat_2d.tscn" id="3_ui"]
+
+[node name="ChatPanel" type="Node3D"]
+script = ExtResource("1_panel")
+
+[node name="ChatViewport" parent="." instance=ExtResource("2_vp")]
+screen_size = Vector2(0.62, 0.44)
+scene = ExtResource("3_ui")
+viewport_size = Vector2(620, 440)
+transparent = 1
+unshaded = true

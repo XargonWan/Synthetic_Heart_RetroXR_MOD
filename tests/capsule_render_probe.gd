@@ -76,6 +76,7 @@ func _ready() -> void:
 	_summoner._screen_text("ONLINE")
 	var screen: Vector3 = _summoner._button.global_position
 	await _shoot(out, "4_screen_from_the_player", screen + Vector3(-0.2, 0.2, 0.75), screen)
+	await _with_synth(out)
 	get_tree().quit(0)
 
 
@@ -88,3 +89,30 @@ func _shoot(out: String, shot: String, from: Vector3, at: Vector3) -> void:
 	var path := "%s/%s.png" % [out, shot]
 	img.save_png(path)
 	print("[probe] %s %s (%dx%d)" % [shot, path, img.get_width(), img.get_height()])
+
+
+## Rei out of the pod with her chat page beside her. Needs SKIN (a Karada skin folder).
+func _with_synth(out: String) -> void:
+	var skin := OS.get_environment("SKIN")
+	if skin.is_empty():
+		return
+	_summoner._show_charging()
+	_summoner._screen_text("ONLINE")
+	var body: CharacterBody3D = preload("res://mods/xenu.synth_rift/scripts/synth_body.gd").new()
+	add_child(body)
+	body.global_position = Vector3(0, 0, 1.5)
+	body.rotation.y = PI   # facing the player, who is on the +Z side
+	var puppet: Node3D = preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd").new()
+	add_child(puppet)
+	puppet.load_model(FileAccess.get_file_as_bytes(skin + "/model.vrm"))
+	puppet.add_clip("idle", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle.fbx"))
+	puppet.add_clip("greet", FileAccess.get_file_as_bytes(skin + "/animations/greet/Standing Greeting.fbx"))
+	body.attach_puppet(puppet)
+	puppet.seek(4.0)
+	body.act("say", {"text": "Ciao! Sono appena arrivata. Che bella stanza."})
+	body.send_chat("Ciao Rei, mi senti?")
+	body.act("say", {"text": "Ti sento benissimo!"})
+	body.toggle_options_ui(_cam)
+	await get_tree().process_frame
+	await _shoot(out, "5_synth_out_of_the_pod", Vector3(1.6, 1.5, 4.6), Vector3(0.4, 1.0, 1.2))
+	await _shoot(out, "6_chat_beside_her", Vector3(1.1, 1.5, 3.4), Vector3(0.7, 1.2, 1.4))
