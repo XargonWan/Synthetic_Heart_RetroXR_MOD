@@ -11,7 +11,8 @@ sys.path.insert(0, SYNTH); os.chdir(SYNTH)
 
 import uvicorn
 from fastapi import FastAPI
-from core import core_initializer, vessel_retroxr_api
+from core import core_initializer
+from plugins.rift_vessel.retroxr import api as vessel_retroxr_api
 from core.vessel_registry import VESSEL_REGISTRY
 import plugins.rift_vessel.retroxr.retroxr  # registers the connector
 from plugins.rift_vessel.vessel_base import VesselActionResult
@@ -204,7 +205,7 @@ async def main():
     if os.environ.get("HOST"):
         # Run Godot on the host from inside a flatpak (the GDExtensions only load there;
         # loopback is shared). The probe's own variables go in with --env.
-        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE")
+        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE", "PROBE_TIMEOUT")
         cmd = ["flatpak-spawn", "--host", *[f"--env={k}={env[k]}" for k in keys if k in env], *cmd]
     proc = await asyncio.create_subprocess_exec(
         *cmd,

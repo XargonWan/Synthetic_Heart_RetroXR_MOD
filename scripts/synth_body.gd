@@ -562,11 +562,22 @@ func _voice_capture() -> AudioEffectCapture:
 	return capture
 
 
-## Her mouth follows how loud she is: the RMS of what her voice just played, as the WebUI measures it.
+## Her mouth follows how loud she is: the RMS of what her voice just played, as the WebUI measures it. Where the
+## voice bus gives no signal (a device whose audio path bypasses it: nothing is measured while she is plainly
+## speaking) the mouth moves by a speech-like pattern instead, which is better than a face that does not speak.
+const SILENT_CAPTURE_SECONDS := 0.25
+var _silent_for := 0.0
+var _speech_clock := 0.0
+var _fallback_logged := false
+## For the tests: she is speaking though no clip plays.
+var _force_speaking := false
+
+
 func _lip_sync() -> void:
 	var face := face_of()
 	if face == null:
 		return
+	var speaking := (_voice != null and _voice.playing) or _force_speaking
 	var level := 0.0
 	if _capture != null:
 		var frames := _capture.get_frames_available()
@@ -576,7 +587,23 @@ func _lip_sync() -> void:
 			for f in buffer:
 				sum += (f.x * f.x + f.y * f.y) * 0.5
 			level = sqrt(sum / float(buffer.size()))
-	face.call("speak_level", level if _voice != null and _voice.playing else 0.0)
+	var delta := get_process_delta_time()
+	if speaking and level < 0.002:
+		_silent_for += delta
+	else:
+		_silent_for = 0.0
+	if speaking and _silent_for > SILENT_CAPTURE_SECONDS:
+		if not _fallback_logged:
+			_fallback_logged = true
+			print("[Rift] lip sync: the voice bus measured nothing while she speaks: her mouth moves by a speech-like pattern")
+		_speech_clock += delta
+		level = speech_pattern(_speech_clock)
+	face.call("speak_level", level if speaking else 0.0)
+
+
+## A mouth that opens and closes like speech: two beats a little apart, 0.02-0.3 (what a measured voice gives).
+static func speech_pattern(t: float) -> float:
+	return clampf(0.14 + 0.09 * sin(t * 17.0) + 0.07 * sin(t * 10.7 + 1.3), 0.02, 0.3)
 
 
 func set_fetcher(fetcher: Node) -> void:

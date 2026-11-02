@@ -439,7 +439,7 @@ func _process(delta: float) -> void:
 		_check(_menu_ui._status.text == "Synth left the room", "the menu says why it closed (got '%s')" % _menu_ui._status.text)
 		_check(_phases.slice(0, 5) == [1, 2, 3, 0], "the phases went CHARGING, ARRIVING, OPEN, IDLE (%s)" % str(_phases))
 		_finish("closed by Synth")
-	elif _t > 60.0:
+	elif _t > (float(OS.get_environment("PROBE_TIMEOUT")) if not OS.get_environment("PROBE_TIMEOUT").is_empty() else 60.0):
 		_check(false, "timeout (phase %d, status '%s')" % [_summoner.phase(), _summoner.status_text()])
 		_finish("timeout")
 

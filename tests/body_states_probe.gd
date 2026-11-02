@@ -30,7 +30,7 @@ func _ready() -> void:
 	add_child(puppet)
 	puppet.load_model(FileAccess.get_file_as_bytes(skin + "/model.vrm"))
 	for pair: Array in [["idle", "idle/Idle2.fbx"], ["greet", "greet/Standing Greeting.fbx"],
-			["think", "think/Thinking.fbx"], ["write", "write/Texting While Standing.fbx"]]:
+			["think", "think/Thinking.fbx"], ["write", "write/Texting While Standing.fbx"], ["walk", "Texting And Walking.fbx"]]:
 		puppet.add_clip(pair[0], FileAccess.get_file_as_bytes(skin + "/animations/" + pair[1]))
 	body.attach_puppet(puppet)
 	await get_tree().process_frame
@@ -49,10 +49,10 @@ func _ready() -> void:
 	_walk(body)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	_check(body.is_busy() and puppet.playing() != "think", "she walks: she is not shown thinking (%s)" % puppet.playing())
+	_check(body.is_busy() and puppet.playing() == "walk", "she walks: the walking clip plays, not thinking (%s)" % puppet.playing())
 	body.set_karada_state("write")
 	await get_tree().physics_frame
-	_check(puppet.playing() != "write", "a new state while she walks does not stop the walk (%s)" % puppet.playing())
+	_check(puppet.playing() == "walk", "a new state while she walks does not stop the walk (%s)" % puppet.playing())
 	while not _walk_done:
 		await get_tree().physics_frame
 	await get_tree().process_frame
@@ -80,6 +80,21 @@ func _ready() -> void:
 	_check(puppet.playing() == "idle", "stepping out of the pod: standing (%s)" % puppet.playing())
 	body.set_ethereal(false)
 	_check(puppet.playing() == "think", "out and solid: thinking again (%s)" % puppet.playing())
+
+	# The mouth: when the voice bus measures nothing while she speaks, it moves anyway; and it closes when she stops.
+	var face: RefCounted = body.face_of()
+	body._capture = null
+	body._force_speaking = true
+	var opened := 0.0
+	for i in 40:
+		await get_tree().process_frame
+		opened = maxf(opened, float(face.mouth_open()))
+	_check(opened > 0.05, "her mouth moves while she speaks even when nothing is measured (%.2f)" % opened)
+	body._force_speaking = false
+	for i in 40:
+		await get_tree().process_frame
+	_check(face.mouth_open() < 0.02, "and closes when she stops (%.2f)" % face.mouth_open())
+	_check(body.speech_pattern(0.0) >= 0.02 and body.speech_pattern(3.3) <= 0.3, "the pattern stays between a whisper and a normal voice")
 
 	print("[probe] done, %d cases, %d failed" % [_count, _failed])
 	get_tree().quit(1 if _failed > 0 else 0)
