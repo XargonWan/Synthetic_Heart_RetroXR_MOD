@@ -18,6 +18,9 @@ from plugins.rift_vessel.vessel_base import VesselActionResult
 
 vessel_retroxr_api.webui_auth.configured_token = lambda: None
 PORT = 8765
+# PROBE=summoner runs the Summoner OBJECT (needs the autoloads); default is the headless link+body.
+PROBE_ARGS = (["res://mods/xenu.synth_rift/tests/summoner_probe.tscn"] if os.environ.get("PROBE") == "summoner"
+              else ["--script", "res://mods/xenu.synth_rift/tests/e2e_probe.gd"])
 GODOT = os.environ.get("GODOT", os.path.expanduser("~/Godot/Godot_v4.7.2-stable_linux.x86_64"))
 PROJECT = os.environ.get("RETROXR_PROJECT", os.path.expanduser("~/gits/RetroXR-xargon/RetroXR"))
 
@@ -76,7 +79,7 @@ async def main():
     env = dict(os.environ, XENU_SYNTH_URL=f"127.0.0.1:{PORT}")
     proc = await asyncio.create_subprocess_exec(
         GODOT, "--headless", "--path", PROJECT,
-        "--script", "res://mods/xenu.synth_rift/tests/e2e_probe.gd",
+        *PROBE_ARGS,
         env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
     async def pump():
