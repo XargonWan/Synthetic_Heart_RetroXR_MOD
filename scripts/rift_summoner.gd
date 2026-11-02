@@ -15,6 +15,12 @@
 ##             camera). Touching the screen again, or the menu button, sends her back.
 ##   LEAVING   she steps back in, dissolves, the rift closes, the screen goes red.
 ##
+## It is handled like an arcade cabinet, because it is as big and as awkward to move:
+## taken by HOLDING the grab on it for a second (a ring fills; a stray squeeze or click
+## never carries a 2 m pod off), see-through while it is in a hand, never thrown, stood
+## upright again if it is dropped leaning, and set down by aiming at the floor, where a
+## yellow rectangle shows its base (GroundPlacement). Its menu opens beside it.
+##
 ## It is IDLE whenever a room loads: an open rift is a live connection to somebody's
 ## server, and that is not something to restore silently.
 extends XRToolsPickable
@@ -29,7 +35,7 @@ const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sou
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
-const MOD_VERSION := "0.2.0"
+const MOD_VERSION := "0.3.0"
 const STATE_INTERVAL := 1.0
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
@@ -42,6 +48,21 @@ const STEP_OUT := 1.3
 ## A touch on the screen sends her back only this long after she arrived: a hand that
 ## is still over the screen from summoning her must not dismiss her.
 const DISMISS_GRACE := 2.5
+
+## How see-through it is while carried: 0 solid, 1 invisible (the cabinets' number).
+const HELD_TRANSPARENCY := 0.65
+## It is still a ghost this long after it stops moving, so a pod dropped or pushed does not
+## flash solid in front of the face on its way down.
+const GHOST_SETTLE := 0.6
+const GHOST_SPEED := 0.15
+## The base on the floor, for the yellow rectangle: the feet reach about 0.75 m from the middle.
+const FOOTPRINT := Vector2(1.3, 1.3)
+## Standing it upright again: the fraction of the tilt corrected each second, and the most it
+## turns at, radians a second (an arcade cabinet's numbers). Under UPRIGHT_EPS it rests.
+const RIGHT_RATE := 5.0
+const RIGHT_MAX := 3.0
+const UPRIGHT_EPS := 0.0035
+const CENTER_OF_MASS_Y := 0.35
 
 const LIGHT_OFF := Color(0.9, 0.15, 0.1)
 ## Synth's own colour, from its banner.
@@ -73,6 +94,11 @@ var _player_near := false
 var _greet_cooldown := 0.0
 var _status := "Off"
 var _status_ok := false
+var _ghost_nodes: Array = []
+var _ghost_mats: Array = []
+var _ghost_on := false
+var _ghost_settle := 0.0
+var _signal_held := false
 
 ## The state line or the lamp changed: the options menu redraws.
 signal status_changed
@@ -107,6 +133,23 @@ func _ready() -> void:
 	_link.action_received.connect(_on_action)
 	_button.button_pressed.connect(_on_screen_touched)
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
+	# Set it down by aiming at the floor: a yellow rectangle shows where it will stand.
+	var placer := GroundPlacement.new()
+	placer.name = "GroundPlacement"
+	placer.host = self
+	placer.set_footprint(FOOTPRINT)
+	add_child(placer)
+	# See-through while carried, like a cabinet.
+	_collect_ghost_parts()
+	grabbed.connect(func(_p: Variant = null, _by: Variant = null) -> void:
+		_signal_held = true
+		_set_ghost(true))
+	dropped.connect(func(_p: Variant = null) -> void:
+		_signal_held = false
+		_ghost_settle = GHOST_SETTLE)
+	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	center_of_mass = Vector3(0.0, CENTER_OF_MASS_Y, 0.0)
+	angular_damp = maxf(angular_damp, 2.0)
 	_show_idle()
 
 
@@ -118,6 +161,91 @@ func _player(player_name: String) -> AudioStreamPlayer3D:
 	p.volume_db = -3.0
 	add_child(p)
 	return p
+
+
+# ── how it is handled ────────────────────────────────────────────────────────
+
+## Taken by holding the grab on it for this long (HoldToGrab asks every pickable).
+func grab_hold_seconds() -> float:
+	return HoldToGrab.DEFAULT_SECONDS
+
+
+## A 2 m pod is set down where the hand let go of it, never thrown across the room.
+func throw_scale() -> float:
+	return 0.0
+
+
+## Whether anything holds it: a hand, or the laser (a ray grab is held without a GrabDriver, so
+## is_picked_up() stays false and no signal fires: the layer it was moved to is the tell).
+func _is_held() -> bool:
+	if _signal_held or is_picked_up():
+		return true
+	return collision_layer == picked_up_layer and collision_layer != original_collision_layer
+
+
+func _physics_process(delta: float) -> void:
+	var held := _is_held()
+	var moving := not freeze and linear_velocity.length() > GHOST_SPEED
+	if held or moving:
+		_ghost_settle = GHOST_SETTLE
+	else:
+		_ghost_settle = maxf(0.0, _ghost_settle - delta)
+	var want := held or _ghost_settle > 0.0
+	if want != _ghost_on:
+		_set_ghost(want)
+	# While nobody holds it, it tends to STAND: dropped leaning, it turns back upright about the
+	# horizontal. Its heading is left alone, the player's to choose.
+	if held or freeze:
+		return
+	var axis := global_basis.y.cross(Vector3.UP)
+	var tilt := asin(clampf(axis.length(), 0.0, 1.0))
+	if tilt < UPRIGHT_EPS:
+		return
+	var turn := minf(tilt * RIGHT_RATE, RIGHT_MAX)
+	var yaw_part := Vector3.UP * angular_velocity.dot(Vector3.UP)
+	angular_velocity = yaw_part + axis.normalized() * turn
+
+
+## Everything that draws, as a list to fade, and the materials the mobile renderer fades instead.
+func _collect_ghost_parts() -> void:
+	_ghost_nodes = find_children("*", "GeometryInstance3D", true, false)
+	var seen := {}
+	for n: Variant in _ghost_nodes:
+		var mi := n as MeshInstance3D
+		if mi != null and mi.material_override is StandardMaterial3D and not seen.has(mi.material_override):
+			var m := mi.material_override as StandardMaterial3D
+			seen[m] = true
+			_ghost_mats.append({"mat": m, "alpha": m.albedo_color.a, "mode": m.transparency})
+
+
+## Whether this renderer honours GeometryInstance3D.transparency. Forward+ does; the Quest's mobile
+## renderer and the Compatibility one do not (the cabinet's carried-solid report, 2026-10-21).
+func _per_instance_fade() -> bool:
+	return RenderingServer.get_current_rendering_method() not in ["mobile", "gl_compatibility"]
+
+
+func _set_ghost(on: bool) -> void:
+	_ghost_on = on
+	var amount := HELD_TRANSPARENCY if on else 0.0
+	if _per_instance_fade():
+		for n: Variant in _ghost_nodes:
+			if is_instance_valid(n):
+				(n as GeometryInstance3D).transparency = amount
+		return
+	# Without it: the same look from the materials, which are this pod's own.
+	for entry: Dictionary in _ghost_mats:
+		var m: StandardMaterial3D = entry["mat"]
+		var c := m.albedo_color
+		c.a = float(entry["alpha"]) * (1.0 - amount)
+		m.albedo_color = c
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if on else int(entry["mode"])
+
+
+## For the tests: how see-through it is now.
+func ghost_transparency() -> float:
+	for n: Variant in _ghost_nodes:
+		return (n as GeometryInstance3D).transparency
+	return 0.0
 
 
 # ── what the player does ─────────────────────────────────────────────────────
@@ -250,7 +378,7 @@ func _arrive() -> void:
 	if not _still_arriving():
 		return
 	# Step out of the capsule, to its front, and turn to the player.
-	var out := _floor_below(global_position + (-global_basis.z * STEP_OUT))
+	var out := _floor_below(global_position + (global_basis.z * STEP_OUT))
 	await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
 	if not _still_arriving():
 		return
@@ -380,9 +508,10 @@ func _spawn_body() -> bool:
 	_body.name = "SynthBody"
 	_body.anchor = global_position
 	host.add_child(_body)
-	# Inside the capsule, facing out of its front.
+	# Inside the pod, facing out of its front.
 	_body.global_position = floor_spot
-	_body.global_rotation.y = global_rotation.y
+	# The pod's front is +Z and a body faces its own -Z.
+	_body.global_rotation.y = global_rotation.y + PI
 	print("[Rift] body at %s" % str(_body.global_position))
 	return true
 

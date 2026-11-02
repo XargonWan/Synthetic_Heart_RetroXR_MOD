@@ -9,7 +9,11 @@ extends FloatingObjectPanel3D
 const PANEL_SCENE := preload("res://mods/xenu.synth_rift/scenes/rift_options_panel.tscn")
 const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const NODE_NAME := "RiftOptionsPanel"
-const FLOAT_HEIGHT := 0.32
+## The menu hangs BESIDE a pod this big, on the side of the player's right hand, at chest height,
+## where it can be read (a cabinet's does the same), not over a hood two metres up.
+const SIDE_DISTANCE := 1.45
+const CHEST_HEIGHT := 1.3
+const TOWARD_PLAYER := 0.2
 
 var _summoner: Node3D = null
 
@@ -91,4 +95,20 @@ func _target_node() -> Node3D:
 
 
 func _float_height() -> float:
-	return FLOAT_HEIGHT
+	return CHEST_HEIGHT
+
+
+## Beside the pod: to the right of someone looking at it, at chest height, a little toward them.
+func _anchor() -> Vector3:
+	if not is_instance_valid(_summoner):
+		return global_position
+	var pod := _summoner.global_position
+	var cam := _camera if is_instance_valid(_camera) else get_viewport().get_camera_3d()
+	var to_cam := Vector3(0, 0, 1)
+	if cam != null:
+		to_cam = Vector3(cam.global_position.x - pod.x, 0.0, cam.global_position.z - pod.z)
+	if to_cam.length() < 0.01:
+		to_cam = Vector3(0, 0, 1)
+	to_cam = to_cam.normalized()
+	var right := (-to_cam).cross(Vector3.UP).normalized()
+	return pod + right * SIDE_DISTANCE + to_cam * TOWARD_PLAYER + Vector3(0, CHEST_HEIGHT, 0)

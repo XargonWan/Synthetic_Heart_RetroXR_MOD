@@ -14,7 +14,7 @@ radius = 0.43
 [sub_resource type="PhysicsMaterial" id="PhysMat_summoner"]
 friction = 0.8
 
-; The Synthetic Heart Rift Summoner: a teleportation pod a person fits in (2.2 m, y = 0 is the middle). Its parts are
+; The Synthetic Heart Rift Summoner: a teleportation pod a person fits in (2.2 m, the origin on the floor in the middle of its base, the front +Z like a cabinet's). Its parts are
 ; built by summoner_model.gd when it enters the tree (they must be direct children
 ; for the highlight). Layer 4 and mask 196613 are what every pickable here has, and
 ; PointerArea on layer 21 (kept inside the shell, so the screen bolted outside it is hit FIRST by a ray) is what the Tab / point-and-press raycast looks for: without
@@ -29,6 +29,7 @@ angular_damp = 8.0
 script = ExtResource("1_summoner")
 
 [node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.105, 0)
 shape = SubResource("Shape_body")
 
 [node name="PickableHighlight" type="Node3D" parent="."]
@@ -39,4 +40,5 @@ collision_layer = 1048576
 collision_mask = 0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="PointerArea"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.105, 0)
 shape = SubResource("Shape_pointer")

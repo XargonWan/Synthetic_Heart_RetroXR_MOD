@@ -48,13 +48,13 @@ func _ready() -> void:
 	# Something to see: an object the room would have saved, in front of the pod.
 	var prop := Node3D.new()
 	prop.name = "Crate"
-	prop.position = Vector3(0.8, 0.2, -2.8)
+	prop.position = Vector3(0.8, 0.2, 2.8)
 	prop.add_to_group("spawned")
 	add_child(prop)
 
-	# The player: their head is the camera, 3.4 m in front of the pod, looking at it.
+	# The player: their head is the camera, 3.4 m in front of the pod (its front is +Z), looking at it.
 	_camera = Camera3D.new()
-	_camera.position = Vector3(-0.5, 1.5, -3.4)
+	_camera.position = Vector3(-0.5, 1.5, 3.4)
 	add_child(_camera)
 	_camera.look_at(Vector3(0, 0.3, 0))
 	_camera.current = true
@@ -66,7 +66,7 @@ func _ready() -> void:
 		return
 	_summoner = packed.instantiate()
 	add_child(_summoner)
-	_summoner.position = Vector3(0, 1.105, 0)   # the pod is 2.21 m: its feet on the floor at y = 0
+	_summoner.position = Vector3(0, 0, 0)   # its origin is on the floor, like a cabinet's
 	_summoner.freeze = true
 	_summoner.charge_seconds = 0.4
 	_summoner.phase_changed.connect(func(p: int) -> void: _phases.append(p))
@@ -76,7 +76,51 @@ func _ready() -> void:
 	_check(_screen_is_red(), "the screen is red while idle")
 	_check(_summoner._screen_label.text == "SUMMON", "the screen says SUMMON")
 	_check_screen_size_and_height()
+	await _check_handling()
 	_menu_then_open()
+
+
+## It is handled like an arcade cabinet: held on for a second, see-through in a hand, never thrown,
+## stood upright when dropped leaning, set down on a yellow rectangle by aiming at the floor.
+func _check_handling() -> void:
+	_check(HoldToGrab.seconds_for(_summoner) == HoldToGrab.DEFAULT_SECONDS, "it is taken by holding the grab on it (%.1f s)" % HoldToGrab.seconds_for(_summoner))
+	_check(_summoner.throw_scale() == 0.0, "it is never thrown")
+
+	# See-through while carried, solid again once it has settled.
+	_check(_summoner.ghost_transparency() == 0.0, "solid at rest")
+	_summoner.grabbed.emit(_summoner, null)
+	await get_tree().physics_frame
+	_check(absf(_summoner.ghost_transparency() - 0.65) < 0.001, "see-through while carried (%.2f)" % _summoner.ghost_transparency())
+	_summoner.dropped.emit(_summoner)
+	for i in 60:
+		await get_tree().physics_frame
+	_check(_summoner.ghost_transparency() == 0.0, "solid again once set down (%.2f)" % _summoner.ghost_transparency())
+
+	# The yellow rectangle, the size of its base, with its front toward +Z; and what a release does.
+	var placer: Node = _summoner.get_node_or_null("GroundPlacement")
+	_check(placer != null, "it has a ground placement")
+	if placer != null:
+		_check(placer.footprint.is_equal_approx(_summoner.FOOTPRINT), "the rectangle is the size of its base")
+		placer.preview({"position": Vector3(3, 0, -2), "yaw": 0.0})
+		var marker := get_tree().current_scene.get_node_or_null("GroundPlacementMarker") as Node3D
+		_check(marker != null and marker.visible, "a yellow rectangle shows where it will stand")
+		placer.preview({})
+		placer.apply({"position": Vector3(2, 0, -1), "yaw": 0.7})
+		_check(_summoner.global_position.distance_to(Vector3(2, 0, -1)) < 0.01, "letting go stands it on the rectangle")
+		_check(absf(_summoner.global_rotation.y - 0.7) < 0.01 and _summoner.global_basis.y.dot(Vector3.UP) > 0.999, "upright, turned as the rectangle was")
+		placer.apply({"position": Vector3(0, 0, 0), "yaw": 0.0})
+
+	# Dropped leaning, it stands up again. 1.2 rad (69 degrees) is past where it would topple by
+	# itself (its base is 0.58 m in radius, its weight 0.35 m up: it tips at 59), so only the
+	# controller that stands it up can bring it back.
+	_summoner.freeze = false
+	_summoner.global_basis = Basis(Vector3.RIGHT, 1.2)
+	for i in 240:
+		await get_tree().physics_frame
+	var upright: float = _summoner.global_basis.y.dot(Vector3.UP)
+	_check(upright > 0.995, "dropped leaning it turns back upright (up dot = %.4f)" % upright)
+	_summoner.freeze = true
+	_summoner.global_transform = Transform3D(Basis(), Vector3.ZERO)
 
 
 ## The screen is small and at about chest height (1.1 - 1.4 m above the floor), on the pod's front.
@@ -86,12 +130,22 @@ func _check_screen_size_and_height() -> void:
 	var width := maxf(size.x, size.z)
 	var depth := minf(size.x, size.z)
 	_check(width <= 0.14 and depth <= 0.08, "the screen is small (%.0f x %.0f cm)" % [width * 100.0, depth * 100.0])
-	var floor_y: float = _summoner.global_position.y - 1.105
+	var floor_y: float = _summoner.global_position.y
 	var h: float = _summoner._button.global_position.y - floor_y
 	_check(h > 1.1 and h < 1.4, "the screen is at chest height (%.2f m above the floor)" % h)
-	# On the front half of the pod (towards -Z), outside the shell.
+	# On the front half of the pod (towards +Z), on the right of someone standing in front, outside the shell.
 	var rel: Vector3 = _summoner._button.global_position - _summoner.global_position
-	_check(rel.z < 0.0 and Vector2(rel.x, rel.z).length() > 0.45, "and on the pod's front, outside the shell")
+	_check(rel.z > 0.0 and Vector2(rel.x, rel.z).length() > 0.45, "and on the pod's front, outside the shell")
+	_check(rel.x > 0.2, "on the right hand of a player standing in front of it (x=%.2f)" % rel.x)
+
+
+## The menu hangs beside the pod, on the right of the player, at chest height.
+func _check_menu_beside(panel: Node3D) -> void:
+	var rel: Vector3 = panel.global_position - _summoner.global_position
+	var flat := Vector2(rel.x, rel.z).length()
+	_check(flat > 1.2 and flat < 1.8, "the menu is beside the pod, not over it (%.2f m)" % flat)
+	_check(rel.y > 1.0 and rel.y < 1.7, "at chest height (%.2f m)" % rel.y)
+	_check(rel.x > 0.8, "on the right of a player standing in front of it (x=%.2f)" % rel.x)
 
 
 func _flat_distance(a: Node3D, b: Node3D) -> float:
@@ -117,8 +171,8 @@ func _tab_finds_it() -> void:
 	await get_tree().physics_frame
 	_check(_summoner.collision_layer == 4, "it is on the pickable layer (3)")
 	_check(_summoner.is_in_group("spawned"), "it is in the spawned group, so a room saves it")
-	var from: Vector3 = _summoner.global_position + Vector3(0, 0, 1.0)
-	var to: Vector3 = _summoner.global_position + Vector3(0, 0, -1.0)
+	var from: Vector3 = _summoner.global_position + Vector3(0, 1.1, 1.0)
+	var to: Vector3 = _summoner.global_position + Vector3(0, 1.1, -1.0)
 	var q := PhysicsRayQueryParameters3D.create(from, to)
 	q.collision_mask = 1 << 20
 	q.collide_with_areas = true
@@ -147,6 +201,9 @@ func _menu_then_open() -> void:
 	if panel == null:
 		get_tree().quit(1)
 		return
+	for i in 3:
+		await get_tree().process_frame
+	_check_menu_beside(panel)
 	var ui: Control = panel._get_ui()
 	_check(ui != null, "the menu's UI loaded in its viewport")
 	if ui == null:

@@ -46,7 +46,7 @@ func _ready() -> void:
 
 	_summoner = (load(SCENE) as PackedScene).instantiate()
 	add_child(_summoner)
-	_summoner.position = Vector3(0, 1.105, 0)
+	_summoner.position = Vector3(0, 0, 0)
 	_summoner.freeze = true
 
 	_cam = Camera3D.new()
@@ -55,16 +55,27 @@ func _ready() -> void:
 	_cam.current = true
 
 	var mid := Vector3(0, 1.0, 0)
-	await _shoot(out, "1_idle_front", Vector3(1.5, 1.5, -3.6), mid)
-	await _shoot(out, "2_idle_three_quarter", Vector3(3.2, 1.5, -2.2), mid)
+	# The pod's front is +Z, so the player stands on that side.
+	await _shoot(out, "1_idle_front", Vector3(1.8, 1.6, 4.2), mid)
+	# Carried: see-through, with the yellow rectangle where it would be set down.
+	_summoner._signal_held = true   # as if in a hand: the pod's own tick keeps it a ghost
+	var placer: Node = _summoner.get_node("GroundPlacement")
+	placer.preview({"position": Vector3(2.0, 0, 2.4), "yaw": 0.0})
+	await _shoot(out, "2_carried_ghost_and_placement", Vector3(3.8, 1.9, 6.4), Vector3(1.0, 0.8, 1.2))
+	placer.preview({})
+	_summoner._signal_held = false
+	_summoner._ghost_settle = 0.0
+	await get_tree().physics_frame
+	# The menu, beside it.
+	_summoner.toggle_options_ui(_cam)
+	await get_tree().process_frame
+	await _shoot(out, "3_menu_beside", Vector3(1.2, 1.6, 4.6), Vector3(0.9, 1.1, 0.4))
+	_summoner.toggle_options_ui(_cam)
 	_summoner._show_charging()
 	_summoner._beam_mat.albedo_color.a = 0.4
-	await _shoot(out, "3_charging", Vector3(1.5, 1.5, -3.6), mid)
 	_summoner._screen_text("ONLINE")
-	_summoner._flash()
-	# A player's eye, an arm's length from the screen, looking at it.
 	var screen: Vector3 = _summoner._button.global_position
-	await _shoot(out, "4_screen_from_the_player", screen + Vector3(0.55, 0.25, -0.5), screen)
+	await _shoot(out, "4_screen_from_the_player", screen + Vector3(-0.2, 0.2, 0.75), screen)
 	get_tree().quit(0)
 
 

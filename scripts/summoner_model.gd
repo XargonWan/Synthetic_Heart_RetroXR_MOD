@@ -18,20 +18,31 @@ const R_OUT := 0.07 * SIZE
 const R_IN := 0.058 * SIZE
 ## Half the width of the opening, from straight ahead, in degrees.
 const OPEN_HALF_DEG := 52.0
-const BASE_Y := -0.15 * SIZE
-## The whole thing stands this tall, feet included: y = 0 is the middle of it.
-const FLOOR_Y := -0.17 * SIZE
+const BASE_Y := 0.02 * SIZE
+## The origin is on the floor, in the middle of the base: that is where GroundPlacement
+## stands a thing, as it does an arcade cabinet.
+const FLOOR_Y := 0.0
+## What the whole pod stands on: feet to hood, in metres.
+const TOTAL_HEIGHT := 0.34 * SIZE
 const SYNTH_CYAN := Color(0.43, 1.0, 1.0)
 ## The screen is a hand-sized thing whatever the pod is: 12 x 7 cm, at about the height of
 ## a standing person's chest, on the pod's front just to the right of the opening.
 const SCREEN_SIZE := Vector2(0.12, 0.07)
 const SCREEN_HEIGHT_ABOVE_FLOOR := 1.25
-const SCREEN_AT_DEG := 72.0
+## Measured before the pod is turned to face +Z (see build), so -72 ends up on +X: the
+## right hand of a player standing in front of it.
+const SCREEN_AT_DEG := -72.0
 const SCREEN_TILT_DEG := 15.0
+
+
+## The pod's front is +Z, like an arcade cabinet's: GroundPlacement turns +Z toward the player
+## and draws its bar there. It is built facing -Z and turned half a circle at the end.
+const FRONT_FLIP := Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
 
 
 ## Build every part under `host`. Returns {lamp: [MeshInstance3D], beam: MeshInstance3D}.
 static func build(host: Node3D) -> Dictionary:
+	var first := host.get_child_count()
 	var shell_mat := StandardMaterial3D.new()
 	shell_mat.albedo_color = Color(0.2, 0.21, 0.24)
 	shell_mat.metallic = 0.75
@@ -93,6 +104,13 @@ static func build(host: Node3D) -> Dictionary:
 	beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var beam := _part(host, "Beam", _cylinder(0.026 * SIZE, HEIGHT - 0.07 * SIZE), beam_mat, Vector3(0, (y0 + y1) * 0.5, 0))
 	beam.visible = false
+
+	# Turn everything to face +Z. Every part is a direct child (the highlight wants that), so
+	# one turn about the origin does it, vertices and all.
+	for i in range(first, host.get_child_count()):
+		var part := host.get_child(i) as Node3D
+		if part != null:
+			part.transform = FRONT_FLIP * part.transform
 
 	return {"lamp": lamp_nodes, "beam": beam, "beam_mat": beam_mat,
 		"button": button, "screen_mat": screen_mat, "screen_label": button.get_node("Label")}
@@ -182,7 +200,7 @@ static func _box(size: Vector3) -> BoxMesh:
 	return m
 
 
-## Scale ticks up the -X side (the left, clear of the screen), outside the wall: thin boxes merged into one mesh.
+## Scale ticks up one side, outside the wall: on the left of a player standing in front, clear of the screen: thin boxes merged into one mesh.
 static func _ribs() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -193,7 +211,7 @@ static func _ribs() -> ArrayMesh:
 		var box := BoxMesh.new()
 		box.size = Vector3(0.008, 0.0045, 0.022) * SIZE
 		var y := top - span * float(i) / float(ticks - 1)
-		var xf := Transform3D(Basis(), Vector3(-(R_OUT + 0.003 * SIZE), y, 0.0))
+		var xf := Transform3D(Basis(), Vector3(R_OUT + 0.003 * SIZE, y, 0.0))
 		st.append_from(box, 0, xf)
 	return st.commit()
 
