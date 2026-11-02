@@ -1,50 +1,42 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://mods/xenu.synth_rift/scripts/rift_summoner.gd" id="1_summoner"]
+[ext_resource type="Script" path="res://Scripts/Objects/highlights/pickable_highlight.gd" id="2_highlight"]
 
-[sub_resource type="BoxShape3D" id="Shape_body"]
-size = Vector3(0.14, 0.12, 0.14)
+[sub_resource type="CylinderShape3D" id="Shape_body"]
+height = 2.21
+radius = 0.585
 
-[sub_resource type="CylinderMesh" id="Mesh_base"]
-top_radius = 0.06
-bottom_radius = 0.07
-height = 0.08
+[sub_resource type="CylinderShape3D" id="Shape_pointer"]
+height = 2.21
+radius = 0.43
 
-[sub_resource type="StandardMaterial3D" id="Mat_base"]
-albedo_color = Color(0.13, 0.14, 0.2, 1)
-metallic = 0.6
-roughness = 0.35
+[sub_resource type="PhysicsMaterial" id="PhysMat_summoner"]
+friction = 0.8
 
-[sub_resource type="SphereMesh" id="Mesh_lamp"]
-radius = 0.03
-height = 0.06
-
-[sub_resource type="PrismMesh" id="Mesh_crest"]
-size = Vector3(0.08, 0.08, 0.02)
-
-[sub_resource type="StandardMaterial3D" id="Mat_crest"]
-albedo_color = Color(0.4, 0.7, 1, 1)
-emission_enabled = true
-emission = Color(0.2, 0.5, 1, 1)
-
-; The Synthetic Heart Rift Summoner. A small pedestal with a status lamp
-; (red off, amber waiting for the server, green open) and a crest on its face.
-[node name="RiftSummoner" type="RigidBody3D"]
-mass = 0.4
+; The Synthetic Heart Rift Summoner: a teleportation pod a person fits in (2.2 m, y = 0 is the middle). Its parts are
+; built by summoner_model.gd when it enters the tree (they must be direct children
+; for the highlight). Layer 4 and mask 196613 are what every pickable here has, and
+; PointerArea on layer 21 (kept inside the shell, so the screen bolted outside it is hit FIRST by a ray) is what the Tab / point-and-press raycast looks for: without
+; it the object cannot be picked up by the hand or opened with Tab.
+[node name="RiftSummoner" type="RigidBody3D" groups=["spawned"]]
+collision_layer = 4
+collision_mask = 196613
+mass = 60.0
+physics_material_override = SubResource("PhysMat_summoner")
+linear_damp = 4.0
+angular_damp = 8.0
 script = ExtResource("1_summoner")
 
 [node name="Collision" type="CollisionShape3D" parent="."]
 shape = SubResource("Shape_body")
 
-[node name="Base" type="MeshInstance3D" parent="."]
-mesh = SubResource("Mesh_base")
-surface_material_override/0 = SubResource("Mat_base")
+[node name="PickableHighlight" type="Node3D" parent="."]
+script = ExtResource("2_highlight")
 
-[node name="Lamp" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06, 0)
-mesh = SubResource("Mesh_lamp")
+[node name="PointerArea" type="StaticBody3D" parent="."]
+collision_layer = 1048576
+collision_mask = 0
 
-[node name="Crest" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0, -0.062)
-mesh = SubResource("Mesh_crest")
-surface_material_override/0 = SubResource("Mat_crest")
+[node name="CollisionShape3D" type="CollisionShape3D" parent="PointerArea"]
+shape = SubResource("Shape_pointer")

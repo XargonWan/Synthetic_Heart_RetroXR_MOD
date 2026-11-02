@@ -1,11 +1,21 @@
-## RiftSummoner -- the Synthetic Heart Rift Summoner.
+## RiftSummoner -- the Synthetic Heart Rift Summoner: a teleportation pod a person fits in.
 ##
-## A pickable the player carries and puts down. Press its action (trigger while
-## held in VR, Shift + click on a desktop) and the rift opens: this connects to the
-## Synthetic Heart server, and when Synth says welcome her body appears beside it.
-## Press again, or lose the server, and the rift closes and the body goes.
+## A pickable the player moves about and sets down. A little screen by its opening, at
+## chest height, is red while the capsule is idle. Put a hand over it (in VR; on a desktop, click it) and:
 ##
-## It is OFF whenever a room loads: an open rift is a live connection to somebody's
+##   CHARGING  the screen turns Synth cyan, the capsule hums up to a climax and the
+##             rift is opened to the Synthetic Heart server in the meantime. The
+##             teleport sound lasts for as long as the loading does, and never less
+##             than `charge_seconds`.
+##   ARRIVING  when the server has welcomed us AND the charge is done: a flash, the
+##             body materialises inside the capsule, steps out to its front and turns
+##             to the player.
+##   OPEN      Synth is told she was summoned and what she sees in front of her, the
+##             player included (a player model does not exist: their head is the
+##             camera). Touching the screen again, or the menu button, sends her back.
+##   LEAVING   she steps back in, dissolves, the rift closes, the screen goes red.
+##
+## It is IDLE whenever a room loads: an open rift is a live connection to somebody's
 ## server, and that is not something to restore silently.
 extends XRToolsPickable
 
@@ -14,6 +24,9 @@ const RiftLink := preload("res://mods/xenu.synth_rift/scripts/rift_link.gd")
 const SynthBody := preload("res://mods/xenu.synth_rift/scripts/synth_body.gd")
 const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const RiftOptionsPanel := preload("res://mods/xenu.synth_rift/scripts/rift_options_panel.gd")
+const SummonerModel := preload("res://mods/xenu.synth_rift/scripts/summoner_model.gd")
+const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sounds.gd")
+const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
 const MOD_VERSION := "0.1.0"
@@ -24,37 +37,90 @@ const MAX_ENTITIES := 20
 ## The player this close for the first time is worth telling Synth.
 const GREET_DISTANCE := 2.0
 const GREET_REARM_SECONDS := 60.0
+## How far in front of the capsule she steps out to.
+const STEP_OUT := 1.3
+## A touch on the screen sends her back only this long after she arrived: a hand that
+## is still over the screen from summoning her must not dismiss her.
+const DISMISS_GRACE := 2.5
 
 const LIGHT_OFF := Color(0.9, 0.15, 0.1)
-const LIGHT_WAIT := Color(1.0, 0.7, 0.1)
-const LIGHT_ON := Color(0.2, 1.0, 0.45)
+## Synth's own colour, from its banner.
+const LIGHT_CYAN := Color(0.43, 1.0, 1.0)
 
+enum Phase { IDLE, CHARGING, ARRIVING, OPEN, LEAVING }
+
+## The shortest the charge sounds and looks. The probes shorten it.
+var charge_seconds := 2.8
+
+var _phase: Phase = Phase.IDLE
 var _link: Node = null
 var _body: CharacterBody3D = null
 var _light_mat: StandardMaterial3D = null
+var _lamp_nodes: Array = []
+var _beam: MeshInstance3D = null
+var _beam_mat: StandardMaterial3D = null
+var _button: Area3D = null
+var _screen_mat: StandardMaterial3D = null
+var _screen_label: Label3D = null
+var _sfx: AudioStreamPlayer3D = null
+var _hum: AudioStreamPlayer3D = null
+var _charge_t := 0.0
+var _open_t := 0.0
+var _link_ready := false
+var _pulse := 0.0
 var _state_clock := 0.0
 var _player_near := false
 var _greet_cooldown := 0.0
-var _on := false
 var _status := "Off"
 var _status_ok := false
 
 ## The state line or the lamp changed: the options menu redraws.
 signal status_changed
+## The phase changed (the probes wait on it).
+signal phase_changed(phase: int)
+
+
+## The capsule's parts. In _enter_tree so they exist before PickableHighlight (a child)
+## readies and looks for its parent's meshes.
+func _enter_tree() -> void:
+	if not _lamp_nodes.is_empty():
+		return
+	var parts: Dictionary = SummonerModel.build(self)
+	_lamp_nodes = parts["lamp"]
+	_beam = parts["beam"]
+	_beam_mat = parts["beam_mat"]
+	_button = parts["button"]
+	_screen_mat = parts["screen_mat"]
+	_screen_label = parts["screen_label"]
 
 
 func _ready() -> void:
 	super._ready()
 	_light_mat = _build_light()
-	_set_light(LIGHT_OFF)
+	_sfx = _player("Sfx")
+	_hum = _player("Hum")
 	_link = RiftLink.new()
 	_link.name = "RiftLink"
 	add_child(_link)
 	_link.opened.connect(_on_opened)
 	_link.closed.connect(_on_closed)
 	_link.action_received.connect(_on_action)
+	_button.button_pressed.connect(_on_screen_touched)
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
+	_show_idle()
 
+
+func _player(player_name: String) -> AudioStreamPlayer3D:
+	var p := AudioStreamPlayer3D.new()
+	p.name = player_name
+	p.unit_size = 2.5
+	p.max_distance = 15.0
+	p.volume_db = -3.0
+	add_child(p)
+	return p
+
+
+# ── what the player does ─────────────────────────────────────────────────────
 
 ## The menu every object has: point at it and press the left thumbstick (Tab on a
 ## desktop). The server and password are edited here, on the object.
@@ -62,79 +128,215 @@ func toggle_options_ui(camera: Node3D) -> void:
 	RiftOptionsPanel.toggle_for(self, camera)
 
 
-func status_text() -> String:
-	return _status
-
-
-func status_ok() -> bool:
-	return _status_ok
-
-
-func _set_status(text: String, ok: bool) -> void:
-	_status = text
-	_status_ok = ok
-	status_changed.emit()
+## A hand over the screen (VR), or a click on it (desktop).
+func _on_screen_touched() -> void:
+	match _phase:
+		Phase.IDLE:
+			set_on(true)
+		Phase.CHARGING:
+			# Changed their mind: only once the charge has plainly started, so the
+			# hand that began it does not cancel it.
+			if _charge_t > 1.0:
+				set_on(false)
+		Phase.OPEN:
+			if _open_t >= DISMISS_GRACE:
+				set_on(false)
 
 
 func toggle() -> void:
-	set_on(not _on)
+	set_on(_phase == Phase.IDLE)
 
 
+## True from the touch until she has left again.
 func is_on() -> bool:
-	return _on
+	return _phase != Phase.IDLE
+
+
+func phase() -> int:
+	return _phase
 
 
 func set_on(on: bool) -> void:
-	if on == _on:
-		return
 	if on:
-		var settings: Dictionary = RiftSettings.load_settings()
-		var url: String = Protocol.socket_url(RiftSettings.server_of(settings), str(settings.get("token", "")))
-		var hello: Dictionary = Protocol.hello(_room_id(), ["motion", "speech"],
-			Protocol.WANTED_ANIMATIONS, MOD_VERSION)
-		_on = true
-		_set_light(LIGHT_WAIT)
-		_set_status("Connecting to %s ..." % RiftSettings.server_of(settings), false)
-		print("[Rift] summoner on (room=%s)" % _room_id())
-		if not _link.open_rift(url, hello):
-			_on = false
-			_set_light(LIGHT_OFF)
+		if _phase == Phase.IDLE:
+			_begin_summon()
 	else:
-		print("[Rift] summoner off")
-		_on = false
-		_link.close_rift("switched_off")
-		_remove_body()
-		_set_light(LIGHT_OFF)
-		_set_status("Off", false)
+		match _phase:
+			Phase.CHARGING:
+				_abort("switched_off", false)
+			Phase.ARRIVING, Phase.OPEN:
+				_dismiss()
+
+
+# ── the sequence ─────────────────────────────────────────────────────────────
+
+func _begin_summon() -> void:
+	var settings: Dictionary = RiftSettings.load_settings()
+	var server := RiftSettings.server_of(settings)
+	var url: String = Protocol.socket_url(server, str(settings.get("token", "")))
+	var hello: Dictionary = Protocol.hello(_room_id(), ["motion", "speech"],
+		Protocol.WANTED_ANIMATIONS, MOD_VERSION)
+	print("[Rift] summoning (room=%s)" % _room_id())
+	_charge_t = 0.0
+	_link_ready = false
+	_set_phase(Phase.CHARGING)
+	_set_status("Connecting to %s ..." % server, false)
+	_show_charging()
+	_play(_sfx, "rise")
+	if not _sfx.finished.is_connected(_on_rise_finished):
+		_sfx.finished.connect(_on_rise_finished)
+	if not _link.open_rift(url, hello):
+		# open_rift has already said why, through closed(); nothing more to do.
+		pass
+
+
+## The climb is over but the server has not answered: keep the hum going until it does.
+func _on_rise_finished() -> void:
+	if _phase == Phase.CHARGING:
+		_play(_hum, "hum")
+
+
+func _on_opened(welcome: Dictionary) -> void:
+	_link_ready = true
+	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
+	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
+		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
+	_set_status("Rift open: charging ...", false)
 
 
 func _process(delta: float) -> void:
-	if _body == null or not _link.is_open():
+	match _phase:
+		Phase.CHARGING:
+			_charge_t += delta
+			_animate_charge()
+			if _link_ready and _charge_t >= charge_seconds:
+				_arrive()
+		Phase.OPEN:
+			_open_t += delta
+			_pulse += delta
+			_beam_mat.albedo_color.a = 0.28 + 0.1 * sin(_pulse * 2.4)
+	if _body == null or _phase != Phase.OPEN or not _link.is_open():
 		return
 	if _greet_cooldown > 0.0:
 		_greet_cooldown -= delta
 	_state_clock += delta
 	if _state_clock >= STATE_INTERVAL:
 		_state_clock = 0.0
-		_link.send_frame(Protocol.state(_body.global_position, "", {"entities": _sense()}))
+		_link.send_frame(_state_frame())
 		_check_player()
 
 
-func _on_opened(welcome: Dictionary) -> void:
-	_set_light(LIGHT_ON)
+func _animate_charge() -> void:
+	var k := clampf(_charge_t / charge_seconds, 0.0, 1.0)
+	# The beam fattens and the lamp flickers faster as it climbs.
+	_beam.scale = Vector3(0.3 + 0.7 * k, 1.0, 0.3 + 0.7 * k)
+	var flicker := 0.5 + 0.5 * sin(_charge_t * (10.0 + 40.0 * k))
+	_beam_mat.albedo_color.a = 0.12 + 0.3 * k * (0.6 + 0.4 * flicker)
+	_light_mat.emission_energy_multiplier = 0.8 + 2.4 * k * (0.7 + 0.3 * flicker)
+
+
+func _arrive() -> void:
+	_set_phase(Phase.ARRIVING)
+	_stop(_hum)
+	_play(_sfx, "arrive")
+	_set_status("Synth is arriving ...", false)
+	_screen_text("ARRIVING")
+	_flash()
+	if not _spawn_body():
+		_abort("no_body", true)
+		return
+	_body.hide_until_summoned()
+	await _body.appear(0.7)
+	if not _still_arriving():
+		return
+	# Step out of the capsule, to its front, and turn to the player.
+	var out := _floor_below(global_position + (-global_basis.z * STEP_OUT))
+	await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
+	if not _still_arriving():
+		return
+	await _body.act("look", {"target": "player"})
+	if not _still_arriving():
+		return
+	_open_t = 0.0
+	_pulse = 0.0
+	_beam.scale = Vector3.ONE
+	_set_phase(Phase.OPEN)
 	_set_status("Open: Synth is in the room", true)
-	_spawn_body()
-	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
-	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
-		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
+	_screen_text("ONLINE")
+	_tell_synth_she_was_summoned()
+
+
+func _still_arriving() -> bool:
+	return _phase == Phase.ARRIVING and _body != null and is_instance_valid(_body) and _link.is_open()
+
+
+## What Synth reads: that she was summoned, and what is in front of her. The state frame
+## goes first so the world state her turn is built from already has the room in it.
+func _tell_synth_she_was_summoned() -> void:
+	var placed := _placed_entities()
+	_link.send_frame(Protocol.state(_body.global_position, "", {"entities": _json_entities(placed)}))
+	var text := SummonerView.summoned_text(_room_id(), placed)
+	print("[Rift] telling Synth: %s" % text)
+	_link.send_frame(Protocol.event("summoned", text, "", 1.0,
+		{"room": _room_id(), "seen": _json_entities(placed)}))
+
+
+## Send her back: she steps into the capsule and dissolves, the rift closes.
+func _dismiss() -> void:
+	if _phase == Phase.LEAVING:
+		return
+	_set_phase(Phase.LEAVING)
+	_set_status("Sending Synth back ...", false)
+	_screen_text("LEAVING")
+	_play(_sfx, "leave")
+	if _body != null and is_instance_valid(_body):
+		var home := _floor_below(global_position)
+		await _body.act("move", {"x": home.x, "y": home.y, "z": home.z})
+		if _body != null and is_instance_valid(_body):
+			await _body.disappear(0.5)
+	_flash()
+	_close("switched_off")
+
+
+## Shut the rift and put everything away.
+func _close(reason: String) -> void:
+	_link.close_rift(reason)
+	_remove_body()
+	_stop(_hum)
+	_set_phase(Phase.IDLE)
+	_set_status("Off" if reason == "switched_off" else _reason_text(reason), false)
+	_show_idle()
+
+
+## The rift failed, or was called off, before or during the arrival.
+func _abort(reason: String, with_sound: bool) -> void:
+	print("[Rift] summon ended: %s" % reason)
+	_link.close_rift(reason)
+	_remove_body()
+	_stop(_hum)
+	_stop(_sfx)
+	if with_sound:
+		_play(_sfx, "fizzle")
+	_set_phase(Phase.IDLE)
+	_set_status("Off" if reason == "switched_off" else _reason_text(reason), false)
+	_show_idle()
+	if reason != "switched_off":
+		_screen_text("FAILED")
 
 
 func _on_closed(reason: String) -> void:
 	print("[Rift] rift closed: %s" % reason)
-	_on = false
+	# Our own close_rift also lands here; by then we are IDLE and have said everything.
+	if _phase == Phase.IDLE:
+		return
 	_remove_body()
-	_set_light(LIGHT_OFF)
+	_stop(_hum)
+	_stop(_sfx)
+	_play(_sfx, "fizzle")
+	_set_phase(Phase.IDLE)
 	_set_status(_reason_text(reason), false)
+	_show_idle()
+	_screen_text("FAILED")
 
 
 ## What the player is told when the rift shuts, in words rather than codes.
@@ -155,6 +357,7 @@ static func _reason_text(reason: String) -> String:
 		"server_closed": return "Synth left the room"
 		"no_server": return "Set a server address in this menu"
 		"connect_failed": return "Could not connect"
+		"no_body": return "Could not place Synth in the room"
 	return "Closed (%s)" % reason
 
 
@@ -162,19 +365,26 @@ func _on_action(id: int, action: String, payload: Dictionary) -> void:
 	await RiftDispatch.handle(_body, _link, id, action, payload)
 
 
-func _spawn_body() -> void:
+# ── the body ─────────────────────────────────────────────────────────────────
+
+func _spawn_body() -> bool:
 	_remove_body()
-	_body = SynthBody.new()
-	_body.name = "SynthBody"
-	_body.anchor = global_position
 	var host: Node = get_parent()
 	if host == null:
 		print("[Rift] summoner has no parent to put the body in")
-		return
+		return false
+	# The floor is measured BEFORE the body exists: a body added at the origin first is
+	# a collider the ray stops on (it found her head and stood her at 1.55 m).
+	var floor_spot := _floor_below(global_position)
+	_body = SynthBody.new()
+	_body.name = "SynthBody"
+	_body.anchor = global_position
 	host.add_child(_body)
-	var spot := global_position + (-global_basis.z * 0.6)
-	_body.global_position = _floor_below(spot)
+	# Inside the capsule, facing out of its front.
+	_body.global_position = floor_spot
+	_body.global_rotation.y = global_rotation.y
 	print("[Rift] body at %s" % str(_body.global_position))
+	return true
 
 
 func _remove_body() -> void:
@@ -188,30 +398,59 @@ func _floor_below(point: Vector3) -> Vector3:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(point + Vector3.UP * 0.5, point + Vector3.DOWN * 3.0)
 	query.exclude = [get_rid()]
+	# Not the pointer boxes (layer 21): they are stood over every object for the laser, and
+	# the first build put the body on top of the capsule's own.
+	query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
 	var hit := space.intersect_ray(query)
 	return (hit["position"] as Vector3) if hit.has("position") else point
 
 
-## What Synth's body can see: the spawned objects near it, nearest first.
-func _sense() -> Array:
+# ── what she sees ────────────────────────────────────────────────────────────
+
+## Everything she could be told about, in world space: the room's spawned objects and
+## the player. The player has no model, so their head is the camera.
+func _entities() -> Array:
 	var found: Array = []
 	for node: Node in get_tree().get_nodes_in_group("spawned"):
 		var n3 := node as Node3D
 		if n3 == null or n3 == self or n3 == _body:
 			continue
-		var d := n3.global_position.distance_to(_body.global_position)
-		if d > SENSE_RADIUS:
-			continue
-		var entry: Dictionary = {"name": str(n3.name), "type": n3.get_class(), "distance": snappedf(d, 0.01)}
+		var entry: Dictionary = {"name": str(n3.name), "type": n3.get_class(), "position": n3.global_position}
 		var script: Script = n3.get_script()
 		if script != null and not script.get_global_name().is_empty():
 			entry["type"] = str(script.get_global_name())
+		var label: Variant = n3.get("display_name")
+		var shown := str(label) if label is String and not String(label).is_empty() else str(n3.name)
+		entry["label"] = shown.substr(0, shown.find("@")) if shown.contains("@") else shown
 		var sid: Variant = n3.get("systemid")
 		if sid is String and not String(sid).is_empty():
 			entry["systemid"] = sid
 		found.append(entry)
-	found.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["distance"] < b["distance"])
-	return found.slice(0, MAX_ENTITIES)
+	var cam := get_viewport().get_camera_3d()
+	if cam != null:
+		found.append({"name": "player", "type": "player", "label": "the player", "position": cam.global_position})
+	return found
+
+
+## `_entities()` seen from the body: bearing, distance and side, nearest first.
+func _placed_entities() -> Array:
+	if _body == null or not is_instance_valid(_body):
+		return []
+	return SummonerView.place(_entities(), _body.global_position, -_body.global_basis.z)
+
+
+## The same, as something a JSON frame can carry.
+func _json_entities(placed: Array) -> Array:
+	var out: Array = []
+	for e: Dictionary in placed.slice(0, MAX_ENTITIES):
+		var j: Dictionary = e.duplicate()
+		j["position"] = Protocol.vec(e["position"])
+		out.append(j)
+	return out
+
+
+func _state_frame() -> Dictionary:
+	return Protocol.state(_body.global_position, "", {"entities": _json_entities(_placed_entities())})
 
 
 func _check_player() -> void:
@@ -230,16 +469,78 @@ func _room_id() -> String:
 	return str(scene.name).to_lower() if scene != null else "room"
 
 
+# ── lamp, screen, sound ──────────────────────────────────────────────────────
+
+func status_text() -> String:
+	return _status
+
+
+func status_ok() -> bool:
+	return _status_ok
+
+
+func _set_status(text: String, ok: bool) -> void:
+	_status = text
+	_status_ok = ok
+	status_changed.emit()
+
+
+func _set_phase(p: Phase) -> void:
+	_phase = p
+	phase_changed.emit(int(p))
+
+
 func _build_light() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.emission_enabled = true
-	mat.emission_energy_multiplier = 2.0
-	var lamp := get_node_or_null("Lamp") as MeshInstance3D
-	if lamp != null:
-		lamp.material_override = mat
+	mat.emission_energy_multiplier = 1.6
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for node: Variant in _lamp_nodes:
+		(node as MeshInstance3D).material_override = mat
 	return mat
 
 
 func _set_light(color: Color) -> void:
 	_light_mat.albedo_color = color
 	_light_mat.emission = color
+	_beam_mat.albedo_color = Color(color.r, color.g, color.b, _beam_mat.albedo_color.a)
+
+
+## Idle: the screen and the inside are red and the beam is off.
+func _show_idle() -> void:
+	_set_light(LIGHT_OFF)
+	_light_mat.emission_energy_multiplier = 1.0
+	_screen_mat.albedo_color = LIGHT_OFF
+	_screen_text("SUMMON")
+	_beam.visible = false
+	_beam.scale = Vector3.ONE
+
+
+func _show_charging() -> void:
+	_set_light(LIGHT_CYAN)
+	_screen_mat.albedo_color = LIGHT_CYAN
+	_screen_text("LINKING")
+	_beam.visible = true
+	_beam.scale = Vector3(0.3, 1.0, 0.3)
+	_beam_mat.albedo_color.a = 0.12
+
+
+func _screen_text(text: String) -> void:
+	_screen_label.text = text
+
+
+## The burst when she arrives or leaves: the lamp is thrown bright and settles.
+func _flash() -> void:
+	_light_mat.emission_energy_multiplier = 8.0
+	var tw := create_tween()
+	tw.tween_property(_light_mat, "emission_energy_multiplier", 1.6, 0.6)
+
+
+func _play(player: AudioStreamPlayer3D, sound: String) -> void:
+	player.stream = SummonerSounds.stream(sound)
+	player.play()
+
+
+func _stop(player: AudioStreamPlayer3D) -> void:
+	if player != null:
+		player.stop()

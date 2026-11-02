@@ -27,6 +27,7 @@ const BUBBLE_SECONDS_PER_CHAR := 0.07
 var anchor: Vector3 = Vector3.ZERO
 
 var _bubble: Label3D = null
+var _visual: MeshInstance3D = null
 var _bubble_left := 0.0
 var _goal: Variant = null  # Vector3 while walking
 var _stuck_for := 0.0
@@ -44,6 +45,8 @@ func _ready() -> void:
 	mesh.height = 1.55
 	capsule.mesh = mesh
 	capsule.position.y = 0.775
+	capsule.name = "Visual"
+	_visual = capsule
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.55, 0.78, 1.0)
 	mat.emission_enabled = true
@@ -127,6 +130,34 @@ func _end_walk(ok: bool, detail: String) -> void:
 	_walk_result = {"ok": ok, "detail": detail, "data": {"position": Protocol.vec(global_position)}}
 	print("[Rift] walk ended: %s at %s" % [detail, str(global_position)])
 	_walk_finished.emit()
+
+
+## Materialise: the body grows out of a point on the floor, fast then slow, brightest at
+## the start. The collider is not scaled (physics bodies do not like it), only the picture.
+func appear(seconds: float) -> void:
+	_visual.scale = Vector3(0.05, 0.02, 0.05)
+	_visual.visible = true
+	var mat := _visual.mesh.material as StandardMaterial3D
+	mat.emission_energy_multiplier = 3.0
+	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_visual, "scale", Vector3.ONE, seconds)
+	tw.tween_property(mat, "emission_energy_multiplier", 0.4, seconds * 1.4)
+	await tw.finished
+
+
+## The reverse: it shrinks into the floor and is gone.
+func disappear(seconds: float) -> void:
+	var mat := _visual.mesh.material as StandardMaterial3D
+	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(_visual, "scale", Vector3(0.05, 0.02, 0.05), seconds)
+	tw.tween_property(mat, "emission_energy_multiplier", 3.0, seconds)
+	await tw.finished
+	_visual.visible = false
+
+
+## Hidden until she is called out of the capsule.
+func hide_until_summoned() -> void:
+	_visual.visible = false
 
 
 func say_bubble(text: String) -> void:

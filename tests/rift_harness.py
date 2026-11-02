@@ -19,6 +19,7 @@ from plugins.rift_vessel.vessel_base import VesselActionResult
 # WRONGPW=1: the server wants a token the probe does not type, so the rift must be refused.
 vessel_retroxr_api.webui_auth.configured_token = (lambda: "the-real-token") if os.environ.get("WRONGPW") else (lambda: None)
 PORT = 8765
+# HOST=1 runs Godot on the host through flatpak-spawn (needed from a flatpak session).
 # PROBE=summoner runs the Summoner OBJECT (needs the autoloads); default is the headless link+body.
 PROBE_ARGS = (["res://mods/xenu.synth_rift/tests/summoner_probe.tscn"] if os.environ.get("PROBE") == "summoner"
               else ["--script", "res://mods/xenu.synth_rift/tests/e2e_probe.gd"])
@@ -26,10 +27,16 @@ GODOT = os.environ.get("GODOT", os.path.expanduser("~/Godot/Godot_v4.7.2-stable_
 PROJECT = os.environ.get("RETROXR_PROJECT", os.path.expanduser("~/gits/RetroXR-xargon/RetroXR"))
 
 
+EVENTS = []
+
+
 class FakePlugin:
     async def connect_world(self, connector_name=None, overrides=None):
         conn = VESSEL_REGISTRY.load_connector(connector_name)
-        ok = await conn.connect({}, lambda e: print("[synth] event:", e.event_type, e.summary))
+        def on_event(e):
+            EVENTS.append(e)
+            print("[synth] event:", e.event_type, "|", e.summary)
+        ok = await conn.connect({}, on_event)
         return VesselActionResult(ok=ok, data={"session_id": "harness-1"})
 
     async def disconnect_world(self, connector_name=None):
@@ -55,6 +62,28 @@ async def drive():
     else:
         print("[synth] NEVER CONNECTED"); return
     print("[synth] rift open; hello =", conn._hello)
+    if os.environ.get("PROBE") == "summoner":
+        # The Summoner brings her out of the capsule before anything else happens.
+        for _ in range(300):
+            if any(e.event_type == "summoned" for e in EVENTS):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            print("[synth] CHECK FAIL: no 'summoned' event arrived"); return
+        ev = next(e for e in EVENTS if e.event_type == "summoned")
+        seen = (ev.data or {}).get("seen", [])
+        checks = {
+            "high salience": ev.salience == 1.0,
+            "says she was summoned": "summoned" in ev.summary,
+            "SEES the player (not 'cannot see')": "The player is " in ev.summary and "cannot see" not in ev.summary,
+            "lists the crate in front": "Crate" in ev.summary,
+            "player is in the data": any(e.get("type") == "player" for e in seen),
+            "bearings are numbers": all(isinstance(e.get("bearing"), (int, float)) for e in seen),
+        }
+        for what, ok in checks.items():
+            print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
+        if os.environ.get("PROBE_EXPECT") == "dismiss":
+            return  # the probe sends her back itself
     await asyncio.sleep(1.2)
     show("status", await conn.act("status", {}))
     show("say", await conn.act("say", {"text": "Ciao, sono entrata nella stanza."}))
@@ -84,16 +113,22 @@ async def main():
         import tempfile
         env.pop("XENU_SYNTH_URL")
         env["PROBE_SERVER"] = f"127.0.0.1:{PORT}"
-        env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_")
+        # In the home folder, not /tmp: a flatpak session's /tmp is private to it.
+        env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_", dir=os.path.expanduser("~/.cache"))
+    cmd = [GODOT, "--headless", "--path", PROJECT, *PROBE_ARGS]
+    if os.environ.get("HOST"):
+        # Run Godot on the host from inside a flatpak (the GDExtensions only load there;
+        # loopback is shared). The probe's own variables go in with --env.
+        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME")
+        cmd = ["flatpak-spawn", "--host", *[f"--env={k}={env[k]}" for k in keys if k in env], *cmd]
     proc = await asyncio.create_subprocess_exec(
-        GODOT, "--headless", "--path", PROJECT,
-        *PROBE_ARGS,
+        *cmd,
         env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
     async def pump():
         async for line in proc.stdout:
             t = line.decode(errors="replace").rstrip()
-            if "[probe]" in t or "[Rift]" in t or "SCRIPT ERROR" in t and "synth_rift" in t:
+            if "[probe]" in t or "[Rift]" in t or "Parse Error" in t or ("SCRIPT ERROR" in t and "Libretro" not in t and "VerletRope" not in t) and "synth_rift" in t:
                 print(t)
     pt = asyncio.create_task(pump())
     d = asyncio.create_task(asyncio.sleep(0) if os.environ.get("WRONGPW") else drive())
