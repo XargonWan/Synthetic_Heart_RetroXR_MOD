@@ -245,8 +245,8 @@ func _process(delta: float) -> void:
 	if _done or _summoner == null:
 		return
 	if _expect == "refused" and _menu_ui != null:
-		if not _summoner.is_on() and _menu_ui._status.text.begins_with("Refused"):
-			_check("password" in _menu_ui._status.text, "the menu names the password (got '%s')" % _menu_ui._status.text)
+		if not _summoner.is_on() and _menu_ui._status.text.begins_with("Could not reach"):
+			_check("password" in _menu_ui._status.text, "the menu says it could not reach Synth, and that a password is only if it has one (got '%s')" % _menu_ui._status.text)
 			_check(_summoner.get_parent().get_node_or_null("SynthBody") == null, "no body for a refused rift")
 			_check(_screen_is_red(), "the screen is red again")
 			_check(_summoner._screen_label.text == "FAILED", "and says FAILED")
