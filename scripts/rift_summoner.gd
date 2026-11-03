@@ -39,7 +39,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.9.0"
+const MOD_VERSION := "0.9.1"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 const MAX_SIGHTINGS := 3

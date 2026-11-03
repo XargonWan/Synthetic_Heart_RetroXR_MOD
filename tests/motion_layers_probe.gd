@@ -89,62 +89,84 @@ func _diff(a: Dictionary, b: Dictionary, parts: Array = []) -> float:
 
 # ── the loop window ──────────────────────────────────────────────────────────
 
+## The biggest turn of any one bone between two poses, in degrees: what the eye catches. The mean over the bones
+## said 0.7 for a repeat that moved her head 4 (a held pose drifts), so the repeat is judged by this.
+func _worst(a: Dictionary, b: Dictionary) -> float:
+	var worst := 0.0
+	for bone: String in a:
+		worst = maxf(worst, rad_to_deg((a[bone] as Quaternion).angle_to(b[bone])))
+	return worst
+
+
+## Run a puppet that has `think` for `seconds` and return the biggest one-frame step of any bone once the intro is
+## over (the pose after the intro is where the repeats start) and how many times the loop went round.
+func _loop_run(puppet: Node3D, seconds: float) -> Dictionary:
+	puppet.xfade_seconds = 0.0
+	puppet.play("think")
+	var w: Dictionary = puppet._window
+	var start: float = w["start"]
+	var worst := 0.0
+	var wraps := 0
+	var armed := false
+	var last := _pose(puppet)
+	var last_t := 0.0
+	for i in int(seconds / STEP):
+		_step(puppet)
+		var now := _pose(puppet)
+		var t: float = puppet._player.current_animation_position
+		var name := String(puppet._player.current_animation)
+		var in_loop := name.contains("~loop") or t >= start
+		if in_loop:
+			if armed:
+				var step := _worst(last, now)
+				if step > 0.5 and OS.get_environment("VERBOSE") != "":
+					print("[probe] step %.2f deg at frame %d, %s t=%.3f" % [step, i, name, t])
+				worst = maxf(worst, step)
+				if t < last_t - 0.1:
+					wraps += 1
+			armed = true
+		last = now
+		last_t = t
+	return {"worst": worst, "wraps": wraps}
+
+
 func _loop_window() -> void:
 	var puppet := _puppet({"think": "think/Thinking.fbx"})
 	puppet.xfade_seconds = 0.0
 	puppet.play("think")
 	var w: Dictionary = puppet._window
-	_check(not w.is_empty() and is_equal_approx(w["start"], 43.0 / 30.0) and is_equal_approx(w["end"], 73.0 / 30.0),
-			"thinking repeats frames 43..73 of its clip (%s)" % str(w))
-	var lo := INF
-	var hi := -INF
-	var passed_intro := false
-	var before_wrap := {}
-	var worst_jump := 0.0
-	var last := _pose(puppet)
-	for i in int(5.0 / STEP):
-		_step(puppet)
-		var t: float = puppet._player.current_animation_position
-		if t >= w["start"]:
-			passed_intro = true
-		if passed_intro:
-			lo = minf(lo, t)
-			hi = maxf(hi, t)
-			var now := _pose(puppet)
-			worst_jump = maxf(worst_jump, _diff(last, now))
-			last = now
-		else:
-			last = _pose(puppet)
-	_check(passed_intro, "the intro plays first and then she is in the loop")
-	_check(lo >= w["start"] - 0.02 and hi <= w["end"] + 0.02, "5 s later she is still inside the window (%.2f..%.2f s)" % [lo, hi])
-	_check(worst_jump < 1.0, "and the repeat is not a visible jump: worst step %.2f deg/bone" % worst_jump)
+	_check(not w.is_empty() and is_equal_approx(w["start"], 54.0 / 30.0) and is_equal_approx(w["end"], 74.0 / 30.0),
+			"thinking repeats frames 54..74 of its clip (%s)" % str(w))
+	_check(w.has("baked"), "and the repeat is a clip made for it (the window's own end blended toward what came before its start)")
+	var run := _loop_run(puppet, 8.0)
+	_check(String(puppet._player.current_animation).contains("~loop"), "after the intro the made loop plays (%s)" % puppet._player.current_animation)
+	_check(run["wraps"] >= 6, "8 s is several turns of it (%d)" % run["wraps"])
+	_check(run["worst"] < 0.4, "and no bone moves more than %.2f deg in a frame, the wrap included" % run["worst"])
+	var span: float = puppet._player.current_animation_length
+	_check(absf(span - 20.0 / 30.0) < 0.05, "it is the window's length (%.2f s)" % span)
 
-	# Control: the descriptor this replaced. Frames 49..79 end 13 degrees from where they began on the hand, the
-	# arm and the head: a repeat that jumps every second.
+	# Control: the same window cut, with no blend. Its two ends are a drifted pose apart.
+	var cut := _puppet({"think": "think/Thinking.fbx"})
+	var d: Dictionary = (cut.clip_descriptor("think") as Dictionary).duplicate(true)
+	d["loop"].erase("blend_frames")
+	cut.set_clip_descriptor("think", d)
+	var cut_run := _loop_run(cut, 8.0)
+	_check(cut_run["wraps"] >= 6, "control: the cut loop goes round too (%d)" % cut_run["wraps"])
+	_check(cut_run["worst"] > 1.5, "control: with no blend a bone steps %.2f deg at the wrap" % cut_run["worst"])
+
+	# Control: the descriptor this replaced (frames 49..79, ending with the outro under way).
 	var old := _puppet({"think": "think/Thinking.fbx"})
-	old.xfade_seconds = 0.0
 	old.set_clip_descriptor("think", {"fps": 30, "intro": {"start_frame": 0, "end_frame": 49},
 			"loop": {"start_frame": 49, "end_frame": 79}, "outro": {"start_frame": 79, "end_frame": 126}})
-	old.play("think")
-	var old_jump := 0.0
-	var old_last := _pose(old)
-	var old_passed := false
-	for i in int(5.0 / STEP):
-		_step(old)
-		var now := _pose(old)
-		if old._player.current_animation_position >= 49.0 / 30.0:
-			old_passed = true
-		if old_passed:
-			old_jump = maxf(old_jump, _diff(old_last, now))
-		old_last = now
-	_check(old_jump > worst_jump * 2.0 and old_jump > 1.0, "control: the old 49..79 window does jump (%.2f deg/bone)" % old_jump)
+	var old_run := _loop_run(old, 8.0)
+	_check(old_run["worst"] > 6.0, "control: the old 49..79 window steps %.2f deg at the wrap" % old_run["worst"])
 
 	# No descriptor, no window: the whole clip repeats.
 	var plain := _puppet({"think": "think/Thinking.fbx"})
 	plain.set_clip_descriptor("think", {})
 	plain.play("think")
 	_check(plain._window.is_empty(), "a clip with no loop window repeats whole")
-	for p: Node in [puppet, old, plain]:
+	for p: Node in [puppet, cut, old, plain]:
 		p.queue_free()
 
 

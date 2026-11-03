@@ -1,6 +1,8 @@
 ## Where a clip can repeat: for a Mixamo .fbx, its speed profile (a held pose is where it nearly stands still), how far
 ## its last frame is from its first, and the windows whose two ends are closest, by mean angle per bone over all
-## the rotation tracks. It is how a descriptor's `loop` window is chosen: by measuring, not by eye.
+## the rotation tracks, and by the WORST bone (what the eye catches: a held pose drifts, and a window whose mean is
+## 0.7 degrees can still turn a head by 4). It is how a descriptor's `loop` window is chosen: by measuring, not by eye.
+## When no window closes well enough, the descriptor asks the client to make the repeat (`loop.blend_frames`).
 ##
 ##   godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/loop_scan.gd -- <clip.fbx> [min frames]
 ##
@@ -58,10 +60,10 @@ func _init() -> void:
 	var windows: Array = []
 	for a in range(maxi(lo_frame, 0), frames):
 		for b in range(a + min_len, mini(frames, hi_frame + 1)):
-			windows.append([_dist(q, a, b), a, b])
+			windows.append([_worst(q, a, b), a, b, _dist(q, a, b)])
 	windows.sort_custom(func(x: Array, y: Array) -> bool: return x[0] < y[0])
 	for i in mini(8, windows.size()):
-		print("[scan] window %d..%d (%.2f s): ends %.2f deg/bone apart" % [windows[i][1], windows[i][2], (windows[i][2] - windows[i][1]) / FPS, windows[i][0]])
+		print("[scan] window %d..%d (%.2f s): worst bone %.2f deg apart (mean %.2f)" % [windows[i][1], windows[i][2], (windows[i][2] - windows[i][1]) / FPS, windows[i][0], windows[i][3]])
 	quit(0)
 
 
@@ -71,3 +73,11 @@ func _dist(q: Array, a: int, b: int) -> float:
 	for i in (q[a] as Array).size():
 		sum += rad_to_deg((q[a][i] as Quaternion).angle_to(q[b][i]))
 	return sum / maxi((q[a] as Array).size(), 1)
+
+
+## The biggest angle between two frames over the bones, in degrees.
+func _worst(q: Array, a: int, b: int) -> float:
+	var worst := 0.0
+	for i in (q[a] as Array).size():
+		worst = maxf(worst, rad_to_deg((q[a][i] as Quaternion).angle_to(q[b][i])))
+	return worst

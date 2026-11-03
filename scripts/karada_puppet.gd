@@ -429,15 +429,15 @@ func play(clip_name: String, loop: bool = true) -> bool:
 		_begin_crossfade()
 		_player.play(clip_name)
 		_window = _loop_window(clip_name) if loop else {}
-		if not _window.is_empty() and _window["from"] > 0.0:
-			_player.seek(_window["from"], true)
+		_enter_window(_player, _window)
 	_playing = clip_name
 	_after = ""
 	return true
 
 
-## The part of `clip_name` that repeats, from its descriptor: {from (where it starts playing), start, end} in seconds,
-## or empty. The intro runs from its start to the loop's; with no intro it starts at the loop.
+## The part of `clip_name` that repeats, from its descriptor: {clip, from (where it starts playing), start, end} in
+## seconds, or empty. The intro runs from its start to the loop's; with no intro it starts at the loop. With
+## `loop.blend_frames` the window is made seamless (`_seamless_loop`) and `baked` names the clip that repeats.
 func _loop_window(clip_name: String) -> Dictionary:
 	var d: Dictionary = _descriptors.get(clip_name, {})
 	if not (d.get("loop") is Dictionary):
@@ -453,7 +453,59 @@ func _loop_window(clip_name: String) -> Dictionary:
 	var from := start
 	if d.get("intro") is Dictionary:
 		from = float((d["intro"] as Dictionary).get("start_frame", 0)) / fps
-	return {"from": from, "start": start, "end": end}
+	var window := {"clip": clip_name, "from": from, "start": start, "end": end}
+	var blend := float(lp.get("blend_frames", 0)) / fps
+	if blend > 0.0:
+		var baked := _seamless_loop(clip_name, start, end, blend)
+		if baked != "":
+			window["baked"] = baked
+	return window
+
+
+## A pose that is held DRIFTS: Thinking's head is 4 degrees and its arm 3 away from where they were a second ago, in a
+## clip with no cycle in it, so repeating frames 43..73 steps by that much every second (the mean over the bones said 0.7
+## and hid it; no window of the clip does better than 2). The repeat is made in the data instead: a new clip, the
+## window's length, whose last `blend` seconds are the window's own blended toward the frames BEFORE its start (the
+## clip at t - length), so its end is exactly its start. It loops by itself. Made once per clip; returns its name.
+func _seamless_loop(clip_name: String, start: float, end: float, blend: float) -> String:
+	var key := "%s~loop_%.3f_%.3f_%.3f" % [clip_name, start, end, blend]
+	if _lib.has_animation(key):
+		return key
+	var src: Animation = _clips[clip_name]
+	var span := end - start
+	blend = minf(blend, minf(span, start))  # the frames before the start must exist
+	if blend <= 0.0:
+		return ""
+	var fps := float((_descriptors.get(clip_name, {}) as Dictionary).get("fps", 30.0))
+	var steps := int(round(span * fps))
+	var loop := Animation.new()
+	loop.length = steps / fps
+	loop.loop_mode = Animation.LOOP_LINEAR
+	for t in src.get_track_count():
+		var kind := src.track_get_type(t)
+		if kind != Animation.TYPE_ROTATION_3D and kind != Animation.TYPE_POSITION_3D and kind != Animation.TYPE_SCALE_3D:
+			continue
+		var track := loop.add_track(kind)
+		loop.track_set_path(track, src.track_get_path(t))
+		loop.track_set_interpolation_type(track, Animation.INTERPOLATION_LINEAR)
+		for k in steps:  # the key at `steps` is the key at 0: the loop wraps onto it
+			var at := start + k / fps
+			var weight := clampf((at - (end - blend)) / blend, 0.0, 1.0)
+			weight = weight * weight * (3.0 - 2.0 * weight)
+			var time := k / fps
+			match kind:
+				Animation.TYPE_ROTATION_3D:
+					var a: Quaternion = src.rotation_track_interpolate(t, at)
+					loop.rotation_track_insert_key(track, time, a.slerp(src.rotation_track_interpolate(t, at - span), weight) if weight > 0.0 else a)
+				Animation.TYPE_POSITION_3D:
+					var a: Vector3 = src.position_track_interpolate(t, at)
+					loop.position_track_insert_key(track, time, a.lerp(src.position_track_interpolate(t, at - span), weight))
+				_:
+					var a: Vector3 = src.scale_track_interpolate(t, at)
+					loop.scale_track_insert_key(track, time, a.lerp(src.scale_track_interpolate(t, at - span), weight))
+	_lib.add_animation(key, loop)
+	print("[Rift] %s: frames %.0f..%.0f made into a seamless loop (blended over the last %.0f frames)" % [clip_name, start * fps, end * fps, blend * fps])
+	return key
 
 
 ## Keep the pose she is in so the next clip can be blended in from it.
@@ -493,8 +545,7 @@ func play_over(clip_name: String) -> bool:
 	(_clips[clip_name] as Animation).loop_mode = Animation.LOOP_LINEAR
 	_over_player.play(clip_name)
 	_over_window = _loop_window(clip_name)
-	if not _over_window.is_empty() and _over_window["from"] > 0.0:
-		_over_player.seek(_over_window["from"], true)
+	_enter_window(_over_player, _over_window)
 	_over_clip = clip_name
 	return true
 
@@ -585,11 +636,29 @@ func _process(delta: float) -> void:
 		face.call("update", delta)
 
 
-## A clip with a loop window goes back to the window's start when it reaches its end.
+## A clip that has just started plays from the window's `from` (its intro's start), or, with nothing before the window,
+## straight into the seamless loop.
+func _enter_window(player: AnimationPlayer, window: Dictionary) -> void:
+	if window.is_empty():
+		return
+	if window.has("baked") and window["from"] >= window["start"]:
+		player.play(window["baked"])
+		window.clear()  # the loop repeats itself
+	elif window["from"] > 0.0:
+		player.seek(window["from"], true)
+
+
+## The intro done, a seamless loop takes over at the window's start (the same pose, so nothing shows); one without
+## goes back to the window's start when it reaches its end.
 func _repeat_window(player: AnimationPlayer, window: Dictionary) -> void:
 	if window.is_empty() or player == null or not player.is_playing():
 		return
 	var t := player.current_animation_position
+	if window.has("baked"):
+		if t >= float(window["start"]):
+			player.play(window["baked"])
+			window.clear()
+		return
 	if t >= float(window["end"]):
 		player.seek(float(window["start"]) + (t - float(window["end"])), true)
 
