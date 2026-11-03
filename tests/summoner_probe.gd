@@ -35,6 +35,10 @@ var _saw_synth_line := false
 var _chat_done := false
 var _pod_at := Vector3.ZERO
 var _saw_think := false
+var _saw_layer := false
+var _saw_crouch := false
+var _saw_stand_up := false
+var _saw_sit := false
 var _saw_voice := false
 var _saw_idle_again := false
 var _gaze_checked := false
@@ -327,6 +331,15 @@ func _process(delta: float) -> void:
 	if body != null and body.has_puppet():
 		if body.karada_state() == "think" and body._puppet.playing() == "think":
 			_saw_think = true
+		var puppet: Node3D = body._puppet
+		if body.karada_state() == "gaming" and body.layer() == "gaming" and puppet.overlay() == "gaming" and puppet.playing() == "idle":
+			_saw_layer = true
+		if body.karada_state() == "crouch" and puppet.playing() == "crouch":
+			_saw_crouch = true
+		if puppet.playing() == "crouch_post":
+			_saw_stand_up = true
+		if body.karada_state() == "sit" and puppet.playing() == "sit":
+			_saw_sit = true
 		if body.voices_played() >= 1:
 			_saw_voice = true
 		if _saw_summon and body.presence() == "" and not _summon_ended:
@@ -428,6 +441,9 @@ func _process(delta: float) -> void:
 		_check(_saw_cyan, "the screen was cyan while open")
 		_check(_saw_synth_line, "what Synth said reached the chat log")
 		_check(_saw_think, "her body played the think clip when Karada said think")
+		_check(_saw_layer, "gaming: her hands played over a standing body (a layer from the server's clip and descriptor)")
+		_check(_saw_crouch and _saw_stand_up, "crouch: she crouched and then stood up with the clip that ends the state")
+		_check(_saw_sit, "sit: she sat")
 		_check(_summon_ended, "and the presence ended once she was out (the server heard `summoned`)")
 		_check(_saw_voice, "her voice (a WAV from the server) was played from her head")
 		_check(_saw_mouth, "her mouth opened while she spoke")

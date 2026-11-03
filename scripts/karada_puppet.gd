@@ -49,6 +49,28 @@ var _playing := ""
 var _after := ""
 var _lib := AnimationLibrary.new()
 var _clips: Dictionary = {}
+## Each clip's descriptor from the skin (`.fbx.json`): its intro / loop / outro frames and its `mask`.
+var _descriptors: Dictionary = {}
+## The window of the playing clip that repeats: {start, end} in seconds, or empty (the whole clip loops).
+var _window: Dictionary = {}
+
+## A clip that moves only the upper body (a descriptor with `"mask": "upper_body"`: a game played seated, shown
+## standing, walking or sitting) plays on a second copy of the animation's skeleton, and only the bones from the
+## hips up read it; the legs go on reading the base clip.
+var _over_root: Node3D = null
+var _over_skel: Skeleton3D = null
+var _over_player: AnimationPlayer = null
+var _over_clip := ""
+var _over_window: Dictionary = {}
+
+## Seconds one clip takes to melt into the next (0 = a cut). The pose she was in is kept and the new one is blended
+## in from it, bone by bone, so it holds for a change of clip, of window or of layer alike.
+var xfade_seconds := 0.3
+var _last_local: Dictionary = {}
+var _last_rise := 0.0
+var _from_local: Dictionary = {}
+var _from_rise := 0.0
+var _xf_left := 0.0
 ## A clip that does not loop has played to its end.
 signal clip_finished(clip_name: String)
 
@@ -385,22 +407,132 @@ func alias_clip(state: String, source: String) -> void:
 		_lib.remove_animation(state)
 	_lib.add_animation(state, _clips[source])
 	_clips[state] = _clips[source]
+	if _descriptors.has(source):
+		_descriptors[state] = _descriptors[source]
+	else:
+		_descriptors.erase(state)
 
 
 func has_clip(clip_name: String) -> bool:
 	return _clips.has(clip_name)
 
 
-## Play a clip (looping). Unknown names are ignored, the model keeps what it was doing.
+## Play a clip (looping). Unknown names are ignored, the model keeps what it was doing. A clip whose descriptor
+## has a `loop` window plays its intro once (when it has one) and then repeats the window; one without plays
+## whole and repeats whole. The change from what was playing is a crossfade.
 func play(clip_name: String, loop: bool = true) -> bool:
 	if _player == null or not _clips.has(clip_name):
 		return false
 	var anim: Animation = _clips[clip_name]
 	anim.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
 	if _playing != clip_name or not _player.is_playing():
+		_begin_crossfade()
 		_player.play(clip_name)
+		_window = _loop_window(clip_name) if loop else {}
+		if not _window.is_empty() and _window["from"] > 0.0:
+			_player.seek(_window["from"], true)
 	_playing = clip_name
 	_after = ""
+	return true
+
+
+## The part of `clip_name` that repeats, from its descriptor: {from (where it starts playing), start, end} in seconds,
+## or empty. The intro runs from its start to the loop's; with no intro it starts at the loop.
+func _loop_window(clip_name: String) -> Dictionary:
+	var d: Dictionary = _descriptors.get(clip_name, {})
+	if not (d.get("loop") is Dictionary):
+		return {}
+	var fps := float(d.get("fps", 30.0))
+	var lp: Dictionary = d["loop"]
+	var start := float(lp.get("start_frame", 0)) / fps
+	var end := float(lp.get("end_frame", 0)) / fps
+	var length := (_clips[clip_name] as Animation).length
+	end = minf(end, length)
+	if end - start < 0.2:
+		return {}
+	var from := start
+	if d.get("intro") is Dictionary:
+		from = float((d["intro"] as Dictionary).get("start_frame", 0)) / fps
+	return {"from": from, "start": start, "end": end}
+
+
+## Keep the pose she is in so the next clip can be blended in from it.
+func _begin_crossfade() -> void:
+	if xfade_seconds <= 0.0 or _last_local.is_empty():
+		return
+	_from_local = _last_local.duplicate()
+	_from_rise = _last_rise
+	_xf_left = xfade_seconds
+
+
+## The skin's descriptor of a clip (what Karada sent beside the file), as the server wrote it.
+func set_clip_descriptor(clip_name: String, descriptor: Dictionary) -> void:
+	if descriptor.is_empty():
+		_descriptors.erase(clip_name)
+	else:
+		_descriptors[clip_name] = descriptor
+
+
+func clip_descriptor(clip_name: String) -> Dictionary:
+	return _descriptors.get(clip_name, {})
+
+
+## `upper_body` for a clip that moves only the body above the hips, else "".
+func clip_mask(clip_name: String) -> String:
+	return str(clip_descriptor(clip_name).get("mask", ""))
+
+
+## Play `clip_name` as a layer over the base clip: from the hips up it is the one that moves her; the hips and
+## legs stay with the base. A crossfade in. False when she has no such clip or no rig to put it on.
+func play_over(clip_name: String) -> bool:
+	if _player == null or not _clips.has(clip_name) or not _ensure_overlay():
+		return false
+	if _over_clip == clip_name and _over_player.is_playing():
+		return true
+	_begin_crossfade()
+	(_clips[clip_name] as Animation).loop_mode = Animation.LOOP_LINEAR
+	_over_player.play(clip_name)
+	_over_window = _loop_window(clip_name)
+	if not _over_window.is_empty() and _over_window["from"] > 0.0:
+		_over_player.seek(_over_window["from"], true)
+	_over_clip = clip_name
+	return true
+
+
+## Take the layer off: the base clip is the whole body again, melted in.
+func stop_over() -> void:
+	if _over_clip == "":
+		return
+	_begin_crossfade()
+	_over_player.stop()
+	_over_clip = ""
+	_over_window = {}
+
+
+func overlay() -> String:
+	return _over_clip
+
+
+## The second copy of the animation rig, made the first time a layer is wanted.
+func _ensure_overlay() -> bool:
+	if _over_skel != null:
+		return true
+	if _src_root == null:
+		return false
+	_over_root = _src_root.duplicate() as Node3D
+	_over_root.name = "AnimationOverlay"
+	add_child(_over_root)
+	var skels: Array = _over_root.find_children("*", "Skeleton3D", true, false)
+	var players: Array = _over_root.find_children("*", "AnimationPlayer", true, false)
+	if skels.is_empty() or players.is_empty():
+		_over_root.queue_free()
+		_over_root = null
+		return false
+	_over_skel = skels[0] as Skeleton3D
+	_over_player = players[0] as AnimationPlayer
+	if _over_player.has_animation_library(""):
+		_over_player.remove_animation_library("")
+	_over_player.add_animation_library("", _lib)
 	return true
 
 
@@ -428,10 +560,11 @@ func clip_length(clip_name: String) -> float:
 	return (_clips[clip_name] as Animation).length if _clips.has(clip_name) else 0.0
 
 
-## Seek (a test, or a still frame).
+## Seek (a test, or a still frame): the pose at that time, now, with no crossfade to it.
 func seek(seconds: float) -> void:
 	if _player != null:
 		_player.seek(seconds, true)
+		_xf_left = 0.0
 		_retarget()
 
 
@@ -441,11 +574,24 @@ func mapped_bones() -> int:
 
 
 func _process(delta: float) -> void:
+	_repeat_window(_player, _window)
+	if _over_clip != "":
+		_repeat_window(_over_player, _over_window)
+	_xf_left = maxf(0.0, _xf_left - delta)
 	if _playing != "":
 		_retarget()
 	_apply_gaze(delta)
 	if face != null:
 		face.call("update", delta)
+
+
+## A clip with a loop window goes back to the window's start when it reaches its end.
+func _repeat_window(player: AnimationPlayer, window: Dictionary) -> void:
+	if window.is_empty() or player == null or not player.is_playing():
+		return
+	var t := player.current_animation_position
+	if t >= float(window["end"]):
+		player.seek(float(window["start"]) + (t - float(window["end"])), true)
 
 
 # ── where she looks ──────────────────────────────────────────────────────────
@@ -553,7 +699,7 @@ func _bind() -> void:
 		var t := skeleton.find_bone(pair[0])
 		var s := _src_skel.find_bone(pair[1])
 		if t >= 0 and s >= 0:
-			_pairs.append({"t": t, "s": s, "depth": _depth(skeleton, t)})
+			_pairs.append({"t": t, "s": s, "depth": _depth(skeleton, t), "upper": _is_upper_body(str(pair[0]))})
 	_pairs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["depth"] < b["depth"])
 	var th := skeleton.find_bone(_vrm("Hips"))
 	var sh := _src_skel.find_bone(_mx("Hips"))
@@ -577,6 +723,14 @@ func _bind() -> void:
 	print("[Rift] retarget bound: %d bones, hips scale %.3f" % [_pairs.size(), _scale])
 
 
+## Above the hips (the spine up, the arms, the hands, the fingers): what a `mask: upper_body` clip moves.
+static func _is_upper_body(vrm_bone: String) -> bool:
+	for lower: String in ["Hips", "Leg", "Foot", "Toe"]:
+		if vrm_bone.contains(lower):
+			return false
+	return true
+
+
 static func _vrm(bone: String) -> String:
 	return "J_Bip_%s" % (bone if bone.contains("_") else "C_" + bone)
 
@@ -597,22 +751,35 @@ static func _depth(sk: Skeleton3D, bone: int) -> int:
 func _retarget() -> void:
 	if _pairs.is_empty() or _src_skel == null:
 		return
+	var blend := 1.0
+	if _xf_left > 0.0 and xfade_seconds > 0.0:
+		var x := 1.0 - _xf_left / xfade_seconds
+		blend = x * x * (3.0 - 2.0 * x)
+	var layered := _over_clip != "" and _over_skel != null
 	for p: Dictionary in _pairs:
 		var t: int = p["t"]
 		var s: int = p["s"]
-		var src_pose := _src_skel.get_bone_global_pose(s).basis.get_rotation_quaternion()
-		var src_rest := _src_skel.get_bone_global_rest(s).basis.get_rotation_quaternion()
+		var src: Skeleton3D = _over_skel if layered and p["upper"] else _src_skel
+		var src_pose := src.get_bone_global_pose(s).basis.get_rotation_quaternion()
+		var src_rest := src.get_bone_global_rest(s).basis.get_rotation_quaternion()
 		var delta := _yaw * (src_pose * src_rest.inverse()) * _yaw.inverse()
 		var desired := delta * skeleton.get_bone_global_rest(t).basis.get_rotation_quaternion()
 		var parent := skeleton.get_bone_parent(t)
 		var parent_pose := Quaternion.IDENTITY
 		if parent >= 0:
 			parent_pose = skeleton.get_bone_global_pose(parent).basis.get_rotation_quaternion()
-		skeleton.set_bone_pose_rotation(t, (parent_pose.inverse() * desired).normalized())
+		var local := (parent_pose.inverse() * desired).normalized()
+		if blend < 1.0 and _from_local.has(t):
+			local = (_from_local[t] as Quaternion).slerp(local, blend)
+		_last_local[t] = local
+		skeleton.set_bone_pose_rotation(t, local)
 	if not _hips.is_empty():
 		var t: int = _hips["t"]
 		var s: int = _hips["s"]
 		var rise := (_src_skel.get_bone_pose(s).origin.y - _src_skel.get_bone_rest(s).origin.y) * _scale
+		if blend < 1.0:
+			rise = lerpf(_from_rise, rise, blend)
+		_last_rise = rise
 		var rest := skeleton.get_bone_rest(t).origin
 		skeleton.set_bone_pose_position(t, rest + Vector3(0, rise, 0))
 

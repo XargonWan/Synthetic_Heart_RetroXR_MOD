@@ -122,6 +122,11 @@ async def _drive():
             "type": "tts-play", "url": "/media/hello.wav", "audio_duration_s": 1.0, "text": "Ciao dal server"}})
         await asyncio.sleep(2.5)
         await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "idle"}})
+        # The postures and activities her skin has clips for: her hands play a game (a layer over her legs), she
+        # crouches and stands up (the clip that ends the state plays in between), she sits.
+        for state, wait in (("gaming", 2.0), ("crouch", 2.0), ("idle", 4.5), ("sit", 2.0), ("idle", 1.0)):
+            await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": state}})
+            await asyncio.sleep(wait)
         # Her face (an emotion, by the logical name the persona maps), then a change of skin (the same one,
         # which is enough to see her body replaced).
         await conn.send_frame({"type": "karada", "kind": "face", "payload": {"type": "vrm_face", "values": {"mouth_smile": 0.7}}})

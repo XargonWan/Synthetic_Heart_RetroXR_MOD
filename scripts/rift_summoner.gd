@@ -39,7 +39,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.8.0"
+const MOD_VERSION := "0.9.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 const MAX_SIGHTINGS := 3
@@ -648,25 +648,34 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 	for clip_name: String in anims:
 		var entry: Variant = anims[clip_name]
 		var clips: Array = (entry as Dictionary).get("clips", []) if entry is Dictionary else []
-		var urls := _own_clips(clip_name, clips)
-		var names: Array = []
-		for i in urls.size():
-			var bytes: PackedByteArray = await fetcher.call("get_bytes", urls[i])
+		var picks := _own_clips(clip_name, clips)
+		var loops: Array = []
+		var posts: Array = []
+		for i in picks.size():
+			var bytes: PackedByteArray = await fetcher.call("get_bytes", picks[i]["url"])
 			if not bool(still_wanted.call()):
 				puppet.queue_free()
 				return null
 			var variant := "%s__%d" % [clip_name, i]
-			if not bytes.is_empty() and bool(puppet.call("add_clip", variant, bytes)):
-				names.append(variant)
-		if names.is_empty():
+			if bytes.is_empty() or not bool(puppet.call("add_clip", variant, bytes)):
+				continue
+			var descriptor: Dictionary = picks[i]["descriptor"]
+			puppet.call("set_clip_descriptor", variant, descriptor)
+			# A clip that plays once beside others that loop is how the state ENDS (a crouch's "stand up").
+			(posts if bool(descriptor.get("play_once", false)) else loops).append(variant)
+		if loops.is_empty() and posts.is_empty():
 			continue
-		if names.size() > 1 and clip_name == "idle":
+		if loops.size() > 1 and clip_name == "idle":
 			# A skin can ship a standing clip that stands badly (Rei's Idle arches her back): of the
 			# standing ones keep the most upright. Not for the others: how upright a gesture or a
 			# typing pose is says nothing about it.
-			await puppet.call("choose_most_upright", clip_name, names)
+			await puppet.call("choose_most_upright", clip_name, loops)
+		elif not loops.is_empty():
+			puppet.call("alias_clip", clip_name, loops[0])
+			if not posts.is_empty():
+				puppet.call("alias_clip", clip_name + "_post", posts[0])
 		else:
-			puppet.call("alias_clip", clip_name, names[0])
+			puppet.call("alias_clip", clip_name, posts[0])
 	# Drawn once, off screen, before anybody is shown her: it is what keeps her from arriving in pieces.
 	await puppet.call("warm")
 	if not bool(still_wanted.call()):
@@ -676,7 +685,8 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 
 
 ## The clips that ARE `state`: the files directly in its folder (`animations/idle/Idle.fbx`), not the
-## variants filed under it (`animations/idle/happy/Happy.fbx` is a mood, not standing). At most four.
+## variants filed under it (`animations/idle/happy/Happy.fbx` is a mood, not standing; `animations/sit/bed/`
+## is for a bed, not a chair). At most four, each as {url, descriptor} (the descriptor is {} when it has none).
 func _own_clips(state: String, clips: Array) -> Array:
 	var own: Array = []
 	var any: Array = []
@@ -686,9 +696,11 @@ func _own_clips(state: String, clips: Array) -> Array:
 		var url := str((c as Dictionary).get("url", ""))
 		if url.is_empty():
 			continue
-		any.append(url)
+		var descriptor: Variant = (c as Dictionary).get("descriptor", {})
+		var entry := {"url": url, "descriptor": descriptor if descriptor is Dictionary else {}}
+		any.append(entry)
 		if url.get_base_dir().get_file() == state:
-			own.append(url)
+			own.append(entry)
 	if own.is_empty() and not any.is_empty():
 		own = [any[0]]
 	return own.slice(0, 4)

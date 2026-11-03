@@ -34,6 +34,8 @@ var _visual: Node3D = null
 var _capsule: MeshInstance3D = null
 var _puppet: Node3D = null
 var _anim_state := ""
+## The clip playing as a layer over the base one ("" for none): a game played with the hands, whatever the legs do.
+var _overlay_state := ""
 ## The one-off clip she is playing (a greeting, an emote); while it plays Karada's states wait.
 var _one_shot := ""
 ## What Synth's Karada says she is doing (idle, think, write, talk, touch): her body follows it,
@@ -462,7 +464,13 @@ func has_puppet() -> bool:
 ## Her avatar's own states, as Karada tells them (the server owns "what she is doing"): the clip of that
 ## name if her skin has it, else standing. A state that is not one of her clips changes nothing.
 func set_karada_state(state: String) -> void:
+	var before := _karada_state
 	_karada_state = state if not state.is_empty() else "idle"
+	# Out of a crouch she stands up (the skin's own clip for it), then does what the state says.
+	if before == "crouch" and _karada_state != "crouch" and _one_shot == "" and _goal == null and _puppet != null \
+			and bool(_puppet.call("has_clip", "crouch_post")):
+		play_once("crouch_post")
+		return
 	_refresh_anim()
 
 
@@ -500,11 +508,36 @@ func _rest_anim() -> String:
 	return _karada_state if bool(_puppet.call("has_clip", _karada_state)) else "idle"
 
 
-## Put the clip back to what she should be doing now, unless a walk or a one-shot has her.
+## The clip that moves her whole body: the rest clip, unless that one only moves the upper body (a layer, below).
+func _base_anim() -> String:
+	var rest := _rest_anim()
+	return "idle" if _is_layer(rest) else rest
+
+
+## A state whose clip is a layer over the body (`mask: upper_body`) is not what she stands or sits in: it is what
+## her hands do. It goes on while she walks, and on whatever she is doing with her legs. It does not go on
+## while she greets, arrives or leaves: those are the whole body's.
+func _wanted_layer() -> String:
+	if _puppet == null or _one_shot != "" or _ethereal or _presence == "summon" or _karada_state == "idle":
+		return ""
+	if not bool(_puppet.call("has_clip", _karada_state)) or not _is_layer(_karada_state):
+		return ""
+	return _karada_state
+
+
+func _is_layer(clip_name: String) -> bool:
+	return _puppet != null and bool(_puppet.call("has_clip", clip_name)) \
+		and str(_puppet.call("clip_mask", clip_name)) == "upper_body"
+
+
+## Put the clips back to what she should be doing now, unless a walk or a one-shot has her legs.
 func _refresh_anim() -> void:
-	if _puppet == null or _goal != null or _one_shot != "":
+	if _puppet == null:
 		return
-	_set_anim(_rest_anim())
+	_set_layer(_wanted_layer())
+	if _goal != null or _one_shot != "":
+		return
+	_set_anim(_base_anim())
 
 
 ## One frame from Karada.
@@ -657,6 +690,21 @@ func _set_anim(state: String) -> void:
 		_puppet.call("play", "idle", true)
 
 
+## The layer clip over her body: `clip_name` from the hips up, or none with "".
+func _set_layer(clip_name: String) -> void:
+	if _puppet == null or clip_name == _overlay_state:
+		return
+	_overlay_state = clip_name
+	if clip_name == "":
+		_puppet.call("stop_over")
+	elif not bool(_puppet.call("play_over", clip_name)):
+		_overlay_state = ""
+
+
+func layer() -> String:
+	return _overlay_state
+
+
 ## A one-off animation from her skin, then standing again (or the state she is in, when she is not busy any more).
 ## False when her skin has not got it.
 func play_once(clip_name: String) -> bool:
@@ -664,6 +712,7 @@ func play_once(clip_name: String) -> bool:
 		return false
 	_one_shot = clip_name
 	_anim_state = ""
+	_set_layer("")
 	if not bool(_puppet.call("play", clip_name, false)):
 		_one_shot = ""
 		return false
