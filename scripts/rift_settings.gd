@@ -26,10 +26,30 @@ static func server_of(s: Dictionary) -> String:
 	return server if not server.is_empty() else DEFAULT_SERVER
 
 
+## May she send pictures of what she sees to Synth (a watched TV, a room)? On unless the player switched it off: a
+## picture leaves the room for the server, and from there perhaps for a model, so it is theirs to forbid.
+static func pictures_on() -> bool:
+	var env := OS.get_environment("XENU_SYNTH_PICTURES")
+	if not env.is_empty():
+		return env != "0"
+	return bool(JsonStore.read_dict(FILE, MOD_ID).get("pictures", true))
+
+
+static func set_pictures(on: bool) -> void:
+	var s: Dictionary = JsonStore.read_dict(FILE, MOD_ID)
+	s["pictures"] = on
+	DirAccess.make_dir_recursive_absolute(FILE.get_base_dir())
+	JsonStore.write_dict(FILE, s, MOD_ID)
+	print("[Rift] pictures %s" % ("on" if on else "off"))
+
+
 ## Write what the player typed. The environment overrides are never written back.
 static func save(server: String, token: String) -> bool:
 	DirAccess.make_dir_recursive_absolute(FILE.get_base_dir())
-	var ok := JsonStore.write_dict(FILE, {"server": server.strip_edges(), "token": token}, MOD_ID)
+	var s: Dictionary = JsonStore.read_dict(FILE, MOD_ID)
+	s["server"] = server.strip_edges()
+	s["token"] = token
+	var ok := JsonStore.write_dict(FILE, s, MOD_ID)
 	print("[Rift] settings %s (server=%s, token %s)" % [
 		"saved" if ok else "NOT saved", server.strip_edges(), "set" if not token.is_empty() else "empty"])
 	return ok

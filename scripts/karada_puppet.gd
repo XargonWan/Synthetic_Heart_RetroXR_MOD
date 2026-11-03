@@ -691,6 +691,19 @@ func gaze_weight() -> float:
 	return _gaze_weight
 
 
+## Where her hands are in the world: the middle of the two. Zero vector when she has no hands to ask.
+func hand_point() -> Vector3:
+	if skeleton == null:
+		return global_position
+	var l := skeleton.find_bone(_vrm("L_Hand"))
+	var r := skeleton.find_bone(_vrm("R_Hand"))
+	if l < 0 or r < 0:
+		return global_position + Vector3(0.0, height * 0.55, 0.0)
+	var a := skeleton.global_transform * skeleton.get_bone_global_pose(l).origin
+	var b := skeleton.global_transform * skeleton.get_bone_global_pose(r).origin
+	return (a + b) * 0.5
+
+
 ## Where her head points, in the model's space (-Z is her front): the head's turn from its rest
 ## applied to the front. For the tests, and for the turn below.
 func head_forward() -> Vector3:

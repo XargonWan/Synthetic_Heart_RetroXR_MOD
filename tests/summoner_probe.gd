@@ -35,6 +35,11 @@ var _saw_synth_line := false
 var _chat_done := false
 var _pod_at := Vector3.ZERO
 var _saw_think := false
+var _game_boy: RigidBody3D = null
+var _tv: StaticBody3D = null
+var _saw_holding := false
+var _held_for := 0.0
+var _saw_carried_to_player := false
 var _saw_layer := false
 var _saw_crouch := false
 var _saw_stand_up := false
@@ -77,6 +82,19 @@ func _ready() -> void:
 	prop.position = Vector3(0.8, 0.2, 2.8)
 	prop.add_to_group("spawned")
 	add_child(prop)
+
+	# A Game Boy Color on the floor BEHIND the pod (its back is -Z): she cannot see it from where she steps out, so
+	# "bring me the Game Boy" means looking for it. A loose object she can lift, named the way the room names one.
+	_game_boy = _make_game_boy()
+	add_child(_game_boy)
+	_game_boy.position = Vector3(-2.2, 0.12, -2.4)
+	_game_boy.add_to_group("spawned")
+
+	# A TV that is on, in front and to the right: a lit screen she can watch and take a picture of.
+	_tv = _make_tv()
+	add_child(_tv)
+	_tv.position = Vector3(2.0, 0.9, 2.4)
+	_tv.add_to_group("spawned")
 
 	# The player: their head is the camera, 3.4 m in front of the pod (its front is +Z), looking at it.
 	_camera = Camera3D.new()
@@ -320,6 +338,7 @@ func _process(delta: float) -> void:
 	var body := host.get_node_or_null("SynthBody")
 	if body != null and not _saw_body:
 		_saw_body = true
+		body.idle_curiosity_on = false  # its random glances would be taken for staring by the gaze checks below (motion_layers_probe tests it)
 		print("[probe] body appeared at %s" % str(body.global_position))
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
 		_put_down_a_vase.call_deferred()
@@ -340,6 +359,12 @@ func _process(delta: float) -> void:
 			_saw_stand_up = true
 		if body.karada_state() == "sit" and puppet.playing() == "sit":
 			_saw_sit = true
+		if body.holding() == "Game Boy Color":
+			_saw_holding = true
+		# It flies to her hands over a moment (it was 1 m away when she took it); after that it stays there.
+		_held_for = _held_for + get_process_delta_time() if body.holding() != "" else 0.0
+		if _held_for > 1.0 and _game_boy != null and is_instance_valid(_game_boy) and _game_boy.global_position.distance_to(body.hand_point()) > 0.4:
+			_check(false, "what she holds stays in her hands, not left behind (%.2f m)" % _game_boy.global_position.distance_to(body.hand_point()))
 		if body.voices_played() >= 1:
 			_saw_voice = true
 		if _saw_summon and body.presence() == "" and not _summon_ended:
@@ -441,6 +466,10 @@ func _process(delta: float) -> void:
 		_check(_saw_cyan, "the screen was cyan while open")
 		_check(_saw_synth_line, "what Synth said reached the chat log")
 		_check(_saw_think, "her body played the think clip when Karada said think")
+		_check(_saw_holding, "she picked the Game Boy up (the object was carried in her hands)")
+		_check(_game_boy.global_position.distance_to(Vector3(_camera.global_position.x, 0.0, _camera.global_position.z)) < 1.8 or _game_boy.global_position.distance_to(_camera.global_position) < 1.8,
+				"and it ended up with the player, who is 3 m from where it was (%.2f m from them)" % _game_boy.global_position.distance_to(_camera.global_position))
+		_check(not _game_boy.freeze and _game_boy.collision_layer != 0, "and it is a loose object again, not frozen in the air")
 		_check(_saw_layer, "gaming: her hands played over a standing body (a layer from the server's clip and descriptor)")
 		_check(_saw_crouch and _saw_stand_up, "crouch: she crouched and then stood up with the clip that ends the state")
 		_check(_saw_sit, "sit: she sat")
@@ -538,6 +567,10 @@ func _gaze_roundtrip(body: Node3D) -> void:
 	_camera.global_position += Vector3(0.6, 0, 0)
 	await get_tree().create_timer(0.9).timeout
 	_check(body.gaze_kind() == "point", "what she chose to look at gets her head, and the player moving does not pull it away (%s)" % body.gaze_kind())
+	# The gaze test is over: the harness may now ask her to look for things (a search turns her body about).
+	var flag := OS.get_environment("GAZE_DONE_FILE")
+	if not flag.is_empty():
+		FileAccess.open(flag, FileAccess.WRITE).store_string("done")
 
 
 func _finish(what: String) -> void:
@@ -547,6 +580,71 @@ func _finish(what: String) -> void:
 
 
 ## Something put down in the room while she is out: she is told (the harness checks the event).
+func _make_tv() -> StaticBody3D:
+	var script := GDScript.new()
+	script.source_code = "extends StaticBody3D\nvar display_name := 'TV'\nfunc is_on() -> bool:\n\treturn true\n"
+	script.reload()
+	var tv := StaticBody3D.new()
+	tv.set_script(script)
+	tv.name = "TV"
+	var body_mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.7, 0.55, 0.5)
+	body_mesh.mesh = box
+	var casing := StandardMaterial3D.new()
+	casing.albedo_color = Color(0.15, 0.15, 0.17)
+	body_mesh.material_override = casing
+	tv.add_child(body_mesh)
+	var screen := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.55, 0.4)
+	screen.mesh = quad
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.1, 0.9, 0.3)
+	mat.emission_enabled = true
+	mat.emission = Color(0.1, 0.9, 0.3)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	screen.material_override = mat
+	screen.position = Vector3(0, 0, -0.26)
+	screen.rotation_degrees = Vector3(0, 180, 0)
+	tv.add_child(screen)
+	# A picture on a screen: bars, so that a picture of it says something (and the side she sees it from does not matter).
+	for k in 6:
+		var bar := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.08, 0.6, 0.6)
+		bar.mesh = bm
+		var bmat := StandardMaterial3D.new()
+		bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		bmat.albedo_color = Color.from_hsv(k / 6.0, 0.9, 1.0)
+		bar.material_override = bmat
+		bar.position = Vector3(-0.2 + k * 0.08, 0.34, 0)
+		tv.add_child(bar)
+	var shape := CollisionShape3D.new()
+	var bshape := BoxShape3D.new()
+	bshape.size = box.size
+	shape.shape = bshape
+	tv.add_child(shape)
+	tv.rotation_degrees = Vector3(0, 53, 0)  # the screen faces the way she comes from
+	return tv
+
+
+func _make_game_boy() -> RigidBody3D:
+	var script := GDScript.new()
+	script.source_code = "extends RigidBody3D\nvar display_name := 'Game Boy Color'\nvar systemid := 'gbc'\nfunc is_powered_on() -> bool:\n\treturn false\nfunc is_picked_up() -> bool:\n\treturn false\n"
+	script.reload()
+	var rb := RigidBody3D.new()
+	rb.set_script(script)
+	rb.name = "System"
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.1, 0.15, 0.03)
+	shape.shape = box
+	rb.add_child(shape)
+	rb.mass = 0.3
+	return rb
+
+
 func _put_down_a_vase() -> void:
 	await get_tree().create_timer(3.0).timeout
 	var vase := Node3D.new()

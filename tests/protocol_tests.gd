@@ -52,7 +52,8 @@ func _urls() -> void:
 
 func _verbs() -> void:
 	for verb: String in ["say", "move", "look", "use", "follow", "unfollow", "status",
-			"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect"]:
+			"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
+			"search", "explore", "watch", "bring", "stop"]:
 		_check(Protocol.is_known_verb(verb), "%s is a verb" % verb)
 	# The body never plays: nothing that reaches a console is a verb.
 	for verb: String in ["press_button", "play", "set_input", "attack", "respawn", "", "Say", "say "]:

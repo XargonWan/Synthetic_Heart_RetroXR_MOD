@@ -33,13 +33,14 @@ const RiftOptionsPanel := preload("res://mods/xenu.synth_rift/scripts/rift_optio
 const SummonerModel := preload("res://mods/xenu.synth_rift/scripts/summoner_model.gd")
 const SummonerSounds := preload("res://mods/xenu.synth_rift/scripts/summoner_sounds.gd")
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
+const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const AssetFetcher := preload("res://mods/xenu.synth_rift/scripts/asset_fetcher.gd")
 const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.9.1"
+const MOD_VERSION := "0.10.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 const MAX_SIGHTINGS := 3
@@ -47,6 +48,10 @@ const SIGHTING_SALIENCE := 0.45
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
 const SENSE_RADIUS := 6.0
 const MAX_ENTITIES := 20
+## How much a finished routine matters to the model: it asked for it, so it wants to know.
+const ROUTINE_SALIENCE := 0.9
+const PICTURE_W := 640
+const PICTURE_H := 480
 ## The player this close for the first time is worth telling Synth.
 const GREET_DISTANCE := 2.0
 const GREET_REARM_SECONDS := 60.0
@@ -113,6 +118,8 @@ var _karada_state := "idle"
 var _skin_loading := false
 ## Karada's presence as last told ("summon" while the vessel introduces her), kept for a body that is not there yet.
 var _presence := ""
+## The ids of what she has SEEN since she stepped out: what she can name (see _lookup_entity).
+var _seen_ids: Dictionary = {}
 var _room_memory: Dictionary = {}
 var _room_seen := false
 var _skin_again: Dictionary = {}
@@ -403,6 +410,9 @@ func _arrive() -> void:
 		_abort("no_body", true)
 		return
 	_body.world_lookup = Callable(self, "_lookup_entity")
+	_body.sight = Callable(self, "_placed_entities")
+	_body.picture_taker = Callable(self, "_take_picture")
+	_body.routine_done.connect(_on_routine_done)
 	_body.set_fetcher(_fetcher)
 	_body.set_karada_state(_karada_state)
 	_body.set_presence(_presence)
@@ -500,6 +510,7 @@ func _tell_synth_she_was_summoned() -> void:
 	var placed := _placed_entities()
 	# What she saw on arrival is the baseline: only what changes from here is news.
 	_room_memory.clear()
+	_seen_ids.clear()
 	_room_seen = false
 	SummonerView.room_changes(_room_memory, placed, true)
 	_room_seen = true
@@ -776,66 +787,106 @@ func _floor_below(point: Vector3) -> Vector3:
 
 # ── what she sees ────────────────────────────────────────────────────────────
 
-## Everything she could be told about, in world space: the room's spawned objects and
-## the player. The player has no model, so their head is the camera.
+## Everything in the room, in world space: the spawned objects and the player (no model: their head is the camera).
+## Each has a `name` a person could say (WorldView: "Game Boy Color", "VHS tape 2", "unknown item" -- never the node's
+## engine name, never empty), its `type` as a person would put it, and the node's own name as `id`.
 func _entities() -> Array:
 	var found: Array = []
 	for node: Node in get_tree().get_nodes_in_group("spawned"):
 		var n3 := node as Node3D
 		if n3 == null or n3 == self or n3 == _body:
 			continue
-		var entry: Dictionary = {"name": str(n3.name), "type": n3.get_class(), "position": n3.global_position}
+		var type_name := n3.get_class()
 		var script: Script = n3.get_script()
 		if script != null and not script.get_global_name().is_empty():
-			entry["type"] = str(script.get_global_name())
-		var label: Variant = n3.get("display_name")
-		var shown := str(label) if label is String and not String(label).is_empty() else str(n3.name)
-		entry["label"] = shown.substr(0, shown.find("@")) if shown.contains("@") else shown
+			type_name = str(script.get_global_name())
+		var display: Variant = n3.get("display_name")
+		var title: Variant = n3.get("game_label")
+		var machine := ""
+		var sid: Variant = n3.get("systemid")
+		if type_name == "RetroSystem" and n3.has_method("display_name_for_toast"):
+			machine = str(n3.call("display_name_for_toast"))
+		var entry: Dictionary = {"id": str(n3.name), "id_num": n3.get_instance_id(), "type": WorldView.kind_of(type_name),
+			"position": n3.global_position, "node": n3,
+			"raw": {"node": str(n3.name), "type": type_name, "display": str(display) if display is String else "",
+				"title": str(title) if title is String else "", "machine": machine}}
+		if str(entry["type"]).is_empty():
+			entry["type"] = WorldView.UNKNOWN
 		if n3.has_method("is_powered_on"):
 			entry["powered"] = bool(n3.call("is_powered_on"))
-		var sid: Variant = n3.get("systemid")
+		elif n3.has_method("is_on"):
+			entry["powered"] = bool(n3.call("is_on"))
 		if sid is String and not String(sid).is_empty():
 			entry["systemid"] = sid
+		if str(title) != "" and title is String:
+			entry["title"] = title
+		if n3.has_method("is_picked_up") and bool(n3.call("is_picked_up")):
+			entry["held"] = true
 		found.append(entry)
+	WorldView.name_all(found)
 	var cam := get_viewport().get_camera_3d()
 	if cam != null:
-		found.append({"name": "player", "type": "player", "label": "the player", "position": cam.global_position})
+		found.append({"id": "player", "id_num": 0, "name": "player", "type": "player", "label": "the player", "position": cam.global_position})
 	return found
 
 
-## The nearest thing in the room that `query` names (its node name or the label she is told), or {}.
-## Exact names win over partial ones.
+## The thing the player or Synth means by `query`, among what she has SEEN (so a name she was never told does not
+## work: she has to look for it), nearest of the best matches; {} when none. Exact names win over parts of one.
 func _lookup_entity(query: String) -> Dictionary:
-	var q := query.strip_edges().to_lower()
-	if q.is_empty() or _body == null or not is_instance_valid(_body):
+	if query.strip_edges().is_empty() or _body == null or not is_instance_valid(_body):
 		return {}
-	var exact: Array = []
-	var partial: Array = []
-	for e: Dictionary in _entities():
-		if str(e.get("type", "")) == "player":
-			continue
-		var name_l := str(e.get("name", "")).to_lower()
-		var label_l := str(e.get("label", "")).to_lower()
-		if q == name_l or q == label_l:
-			exact.append(e)
-		elif name_l.contains(q) or label_l.contains(q):
-			partial.append(e)
-	var pool: Array = exact if not exact.is_empty() else partial
+	_placed_entities()  # what is in front of her right now counts as seen, even before the next state frame
 	var best: Dictionary = {}
+	var best_score := 0
 	var best_d := INF
-	for e: Dictionary in pool:
+	for e: Dictionary in _entities():
+		if str(e.get("type", "")) == "player" or not _seen_ids.has(str(e.get("id", ""))):
+			continue
+		var score := WorldView.matches(e, query)
+		if score == 0:
+			continue
 		var d: float = (e["position"] as Vector3).distance_to(_body.global_position)
-		if d < best_d:
-			best_d = d
+		if score > best_score or (score == best_score and d < best_d):
 			best = e
+			best_score = score
+			best_d = d
 	return best
 
 
-## `_entities()` seen from the body: bearing, distance and side, nearest first.
+## Can she SEE this point from her eyes? Nothing solid between (the pointer boxes of the laser do not count, and
+## neither does the thing itself or what it rests on within 35 cm of it).
+func _line_of_sight(to: Vector3, node: Node = null) -> bool:
+	if _body == null or not is_instance_valid(_body):
+		return false
+	var from := _body.global_position + Vector3(0.0, _body.eye_height(), 0.0)
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
+	var exclude: Array[RID] = [_body.get_rid()]
+	if node is CollisionObject3D:
+		exclude.append((node as CollisionObject3D).get_rid())
+	query.exclude = exclude
+	var hit := _body.get_world_3d().direct_space_state.intersect_ray(query)
+	return hit.is_empty() or (hit["position"] as Vector3).distance_to(to) < 0.35
+
+
+## `_entities()` as she sees them: in front of her (about 180 degrees), within reach of her eyes, not hidden;
+## bearing, distance and side, nearest first. What she sees is remembered by id (`_seen_ids`): it is what she can name.
 func _placed_entities() -> Array:
 	if _body == null or not is_instance_valid(_body):
 		return []
-	return SummonerView.place(_entities(), _body.global_position, -_body.global_basis.z)
+	var seen: Array = []
+	var forward := -_body.global_basis.z
+	for e: Dictionary in _entities():
+		var pos: Vector3 = e["position"]
+		if not WorldView.in_view(_body.global_position, forward, pos):
+			continue
+		if str(e.get("type", "")) != "player" and not _line_of_sight(pos + Vector3(0, 0.05, 0), e.get("node") as Node):
+			continue
+		seen.append(e)
+	var placed: Array = SummonerView.place(seen, _body.global_position, forward)
+	for e: Dictionary in placed:
+		_seen_ids[str(e.get("id", ""))] = true
+	return placed
 
 
 ## The same, as something a JSON frame can carry.
@@ -843,13 +894,26 @@ func _json_entities(placed: Array) -> Array:
 	var out: Array = []
 	for e: Dictionary in placed.slice(0, MAX_ENTITIES):
 		var j: Dictionary = e.duplicate()
+		j.erase("node")
+		j.erase("raw")
+		j.erase("id_num")
 		j["position"] = Protocol.vec(e["position"])
 		out.append(j)
 	return out
 
 
 func _state_frame() -> Dictionary:
-	return Protocol.state(_body.global_position, "", {"entities": _json_entities(_placed_entities())})
+	return Protocol.state(_body.global_position, _body.holding(), {"entities": _json_entities(_placed_entities())})
+
+
+## What she did on her own is over: Synth is told how it went, as a turn of its own (a search that found the thing,
+## or that looked everywhere and did not). A picture her eyes took rides in `data`.
+func _on_routine_done(kind: String, ok: bool, summary: String, data: Dictionary) -> void:
+	if _link == null:
+		return
+	data["ok"] = ok
+	_link.send_frame(Protocol.event("%s_done" % kind, summary, "", ROUTINE_SALIENCE, data))
+	_link.send_frame(_state_frame())
 
 
 ## She notices what changes around her: a thing put down or taken away, a machine switched on or off. Told as
@@ -954,3 +1018,43 @@ func _play(player: AudioStreamPlayer3D, sound: String) -> void:
 func _stop(player: AudioStreamPlayer3D) -> void:
 	if player != null:
 		player.stop()
+
+
+## A picture from her eyes toward `point`: a JPEG, base64, small. Done in a viewport of its own that shares the room's
+## world, with a camera at her eyes (nothing is added to what the player sees; the camera sits just ahead of her face,
+## so her own head is behind it). Not in a headless run (no renderer to draw it) and not with the pod's "pictures"
+## switch off (the picture leaves the room for the server, so it is the player's to forbid).
+func _take_picture(point: Vector3) -> Dictionary:
+	if not RiftSettings.pictures_on():
+		return {"ok": false, "detail": "pictures_off"}
+	if DisplayServer.get_name() == "headless" or _body == null or not is_instance_valid(_body):
+		return {"ok": false, "detail": "no_renderer"}
+	var from := _body.global_position + Vector3(0.0, _body.eye_height(), 0.0)
+	var aim := point - from
+	if aim.length() < 0.1:
+		return {"ok": false, "detail": "too_close"}
+	from += aim.normalized() * 0.18
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(PICTURE_W, PICTURE_H)
+	viewport.world_3d = get_viewport().world_3d
+	viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	viewport.msaa_3d = Viewport.MSAA_2X
+	add_child(viewport)
+	var camera := Camera3D.new()
+	camera.fov = 75.0
+	camera.near = 0.05
+	viewport.add_child(camera)
+	camera.global_transform = Transform3D(Basis.looking_at(aim.normalized(), Vector3.UP), from)
+	camera.current = true
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var image := viewport.get_texture().get_image()
+	viewport.queue_free()
+	if image == null or image.is_empty():
+		return {"ok": false, "detail": "no_image"}
+	var jpeg := image.save_jpg_to_buffer(0.8)
+	print("[Rift] picture taken: %dx%d, %d KB" % [image.get_width(), image.get_height(), jpeg.size() / 1024])
+	if OS.get_environment("RIFT_PICTURE_OUT") != "":
+		FileAccess.open(OS.get_environment("RIFT_PICTURE_OUT"), FileAccess.WRITE).store_buffer(jpeg)
+	return {"ok": true, "jpeg_b64": Marshalls.raw_to_base64(jpeg)}

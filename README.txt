@@ -16,6 +16,8 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/summoner_view.gd` what Synth sees when she steps out (bearing, distance, side)
 - `scripts/vrm_budget.gd`, `body_cache.gd` what a body may cost (textures, morph targets, triangles per tier) and the finished body kept under user://
 - `scripts/vrm_face.gd` her face: the WebUI's FacialDriver (blink, emotion layers, mouth from her voice's loudness)
+- `scripts/world_view.gd` what a thing in the room is called for a person (`unknown item`, never empty) and what is in her view (180 degrees, not hidden)
+- `scripts/synth_routines.gd` what she does on her own once asked: search, explore, watch, fetch; the model is told afterwards
 - `scripts/karada_puppet.gd` her VRM + Mixamo clips retargeted by hand, her gaze, the crossfade between clips, a descriptor's loop window and the upper-body layer (`mask`)
 - `assets/` the Synth logo (no text) for the pod's flanks, and its glow map
 - `scripts/rift_summoner.gd` the pickable and the summoning sequence (its own menu: point + left stick / Tab; server and password live there)
@@ -24,5 +26,5 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `tests/rift_harness.py` + `tests/e2e_probe.gd` the mod against Synth's real rift socket
 
 Built: socket, handshake, her own body from the Karada skin, voice and lip movement, blink and
-face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with her hands.
+face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with her hands, looking for things, carrying them to you, watching the TV (with a picture, which can be switched off in the pod's menu).
 Not built: picking up objects, screens, touch.

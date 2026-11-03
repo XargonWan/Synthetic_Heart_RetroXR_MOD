@@ -15,6 +15,8 @@ const SOCKET_PATH := "/api/vessel/retroxr/ws"
 const CORE_VERBS: Array[String] = ["say", "move", "look", "use", "follow", "unfollow", "status"]
 const WORLD_VERBS: Array[String] = [
 	"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
+	# What she does on her own once asked; the result comes later, as an event (SynthRoutines).
+	"search", "explore", "watch", "bring", "stop",
 ]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
 const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
@@ -25,6 +27,7 @@ const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "gree
 ## Add a verb here when SynthBody.act does it, and not before.
 const IMPLEMENTED_VERBS: Array[String] = [
 	"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
+	"search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop",
 ]
 
 

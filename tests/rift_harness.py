@@ -29,6 +29,7 @@ PROJECT = os.environ.get("RETROXR_PROJECT", os.path.expanduser("~/gits/RetroXR-x
 
 
 EVENTS = []
+GAZE_FLAG = ""   # the file the probe writes once its gaze test is over
 
 
 class FakePlugin:
@@ -151,10 +152,10 @@ async def _drive():
     show("move through the wall", await conn.act("move", {"x": 0, "y": 0, "z": -6}))
     show("move 50 m away", await conn.act("move", {"x": 50, "y": 0, "z": 0}))
     show("look at (5,0,0)", await conn.act("look", {"x": 5, "y": 0, "z": 0}))
-    show("pick_up (the mod never declared it)", await conn.act("pick_up", {"target": "cart"}))
     # What she is offered is what the mod said it can do, and nothing else.
     declared = conn.declared_verbs()
-    want = {"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote"}
+    want = {"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
+            "search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop"}
     print(f"[synth] CHECK {'ok  ' if declared == want else 'FAIL'} verbs: the mod declared {sorted(declared)}")
     offered = set(conn.get_world_actions()) | set(conn.core_verbs)
     print(f"[synth] CHECK {'ok  ' if offered == want and 'observe' not in offered and 'attack' not in offered else 'FAIL'} verbs: offered to her {sorted(offered)}")
@@ -187,8 +188,70 @@ async def _drive():
         sights = [e for e in EVENTS if e.event_type == "sighting"]
         ok = any("Vase" in e.summary and "appeared" in e.summary for e in sights)
         print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} sighting: a thing put down in the room is told to her ({[e.summary for e in sights]!r})")
-        await asyncio.sleep(30)   # the probe looks at how she behaves when nobody is asking her anything
+        await routines_through_the_socket(conn)
+        await asyncio.sleep(12)   # the probe looks at how she behaves when nobody is asking her anything
     await FakePlugin().disconnect_world("retroxr")
+
+
+async def wait_event(kind, timeout=70.0):
+    for _ in range(int(timeout * 10)):
+        hit = [e for e in EVENTS if e.event_type == kind]
+        if hit:
+            return hit[-1]
+        await asyncio.sleep(0.1)
+    return None
+
+
+async def routines_through_the_socket(conn):
+    """I am the model here: I ask for what the model would, and read what comes back."""
+    # The probe's gaze test has the body to itself first (a search turns her about).
+    for _ in range(900):
+        if not GAZE_FLAG or os.path.exists(GAZE_FLAG):
+            break
+        await asyncio.sleep(0.1)
+    # She cannot name what she has not seen: the Game Boy is behind the pod.
+    r = await conn.act("look_at", {"target": "Game Boy"})
+    print(f"[synth] CHECK {'ok  ' if not r.ok else 'FAIL'} a thing she has not seen cannot be named ({r.detail!r})")
+    r = await conn.act("search", {"target": "Game Boy"})
+    print(f"[synth] CHECK {'ok  ' if r.ok and 'looking for' in (r.detail or '') else 'FAIL'} search: answered at once, not after the walk ({r.detail!r})")
+    ev = await wait_event("search_done")
+    ok = ev is not None and (ev.data or {}).get("found") is True and "Game Boy Color" in ev.summary
+    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} search: told afterwards that she found it: {ev.summary if ev else None!r}")
+    # The TV: she goes and watches it, and is told afterwards what she saw (a picture too, with a window to draw it).
+    EVENTS.clear()
+    r = await conn.act("watch", {"target": "TV", "seconds": 4})
+    print(f"[synth] CHECK {'ok  ' if r.ok else 'FAIL'} watch: accepted ({r.detail!r})")
+    ev = await wait_event("watch_done", 90)
+    ok = ev is not None and "watched TV" in ev.summary and "switched on" in ev.summary
+    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} watch: told afterwards what she saw: {ev.summary if ev else None!r}")
+    atts = (ev.data or {}).get("attachments") if ev else None
+    windowed = bool(os.environ.get("WINDOWED"))
+    print(f"[synth] CHECK {'ok  ' if (bool(atts) == windowed) else 'FAIL'} watch: the picture rode with it as an attachment (windowed={windowed}, got {len(atts or [])})")
+    if atts:
+        import base64
+        raw = base64.b64decode(atts[0]["data"])
+        out = os.environ.get("RIFT_PICTURE_COPY", "")
+        if out:
+            open(out, "wb").write(raw)
+        print(f"[synth] picture: {atts[0]['mime_type']}, {len(raw) // 1024} KB")
+    # A thing that is not there: she looks, and says so (and what she did see).
+    EVENTS.clear()
+    r = await conn.act("search", {"target": "toaster"})
+    ev = await wait_event("search_done", 90)
+    ok = ev is not None and (ev.data or {}).get("found") is False and "did not see it" in ev.summary
+    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} search: honest about what is not there: {ev.summary if ev else None!r}")
+    # Fetch it.
+    EVENTS.clear()
+    r = await conn.act("bring", {"target": "Game Boy"})
+    print(f"[synth] CHECK {'ok  ' if r.ok else 'FAIL'} bring: accepted ({r.detail!r})")
+    ev = await wait_event("bring_done", 120)
+    ok = ev is not None and bool((ev.data or {}).get("ok"))
+    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} bring: told afterwards how it went: {ev.summary if ev else None!r}")
+    st = conn._state or {}
+    print(f"[synth] holding in the state frame: {st.get('holding')!r}")
+    # What she was told about the room is names a person could say.
+    names = [e.get("name") for e in ((st.get("extra") or {}).get("entities") or [])]
+    print(f"[synth] CHECK {'ok  ' if names and all(n and not str(n).startswith('@') for n in names) else 'FAIL'} the entities she is told have names: {names!r}")
 
 
 async def main():
@@ -204,13 +267,16 @@ async def main():
         env["PROBE_SERVER"] = f"127.0.0.1:{PORT}"
         # In the home folder, not /tmp: a flatpak session's /tmp is private to it.
         env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_", dir=os.path.expanduser("~/.cache"))
+        env["GAZE_DONE_FILE"] = os.path.join(env["XDG_DATA_HOME"], "gaze_done")
+        global GAZE_FLAG
+        GAZE_FLAG = env["GAZE_DONE_FILE"]
     # WINDOWED=1: a real window (the picture is drawn; SHOTS=<folder> saves frames of the summon). Never headless for a picture.
     head = ["--resolution", "640x480", "--position", "20,20"] if os.environ.get("WINDOWED") else ["--headless"]
     cmd = [GODOT, *head, "--path", PROJECT, *PROBE_ARGS]
     if os.environ.get("HOST"):
         # Run Godot on the host from inside a flatpak (the GDExtensions only load there;
         # loopback is shared). The probe's own variables go in with --env.
-        keys = ("XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE", "PROBE_TIMEOUT")
+        keys = ("GAZE_DONE_FILE", "XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE", "PROBE_TIMEOUT")
         cmd = ["flatpak-spawn", "--host", *[f"--env={k}={env[k]}" for k in keys if k in env], *cmd]
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -224,7 +290,7 @@ async def main():
     pt = asyncio.create_task(pump())
     d = asyncio.create_task(asyncio.sleep(0) if os.environ.get("WRONGPW") else drive())
     try:
-        await asyncio.wait_for(proc.wait(), 120)
+        await asyncio.wait_for(proc.wait(), float(os.environ.get("GODOT_TIMEOUT", "420")))
     except asyncio.TimeoutError:
         proc.kill(); print("[harness] godot timeout")
     await pt

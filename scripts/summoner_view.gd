@@ -6,9 +6,9 @@
 ## of her, the player above all -- and a line for what is behind.
 extends RefCounted
 
-## What counts as "in front": within this many degrees of straight ahead.
-const FRONT_HALF_DEG := 80.0
-const SEE_RADIUS := 5.0
+## What counts as "in front": what a person sees without turning, about 180 degrees (WorldView.FOV_DEG).
+const FRONT_HALF_DEG := 90.0
+const SEE_RADIUS := 6.0
 const MAX_LISTED := 8
 
 

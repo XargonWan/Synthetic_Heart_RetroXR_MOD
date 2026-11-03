@@ -275,6 +275,10 @@ func _body() -> void:
 	floor_body.add_child(shape)
 	floor_body.position = Vector3(0, -0.5, 0)
 	add_child(floor_body)
+	var player := Camera3D.new()  # the player's head: what her gaze logic reads
+	player.position = Vector3(0, 1.5, 3.0)
+	add_child(player)
+	player.current = true
 	var body: CharacterBody3D = Body.new()
 	add_child(body)
 	var puppet: Node3D = Puppet.new()
@@ -287,6 +291,18 @@ func _body() -> void:
 	body.attach_puppet(puppet)
 	await get_tree().process_frame
 
+	# Idle: now and then her head goes to something that is really in front of her (a machine that is on first),
+	# never while she speaks or is doing something she was asked.
+	body.sight = func() -> Array: return [{"name": "TV", "type": "TV", "position": Vector3(1.0, 1.0, -2.0), "powered": true, "distance": 2.2}]
+	body.idle_curiosity_on = false
+	body.routines._idle_clock = 0.0
+	body.routines.idle_curiosity(0.1, true)
+	_check(body.gaze_kind() == "", "she does not look about while she speaks (%s)" % body.gaze_kind())
+	body.routines._idle_clock = 0.0
+	body.routines.idle_curiosity(0.1, false)
+	await get_tree().create_timer(0.9).timeout
+	_check(body.gaze_kind() == "point", "once it is time her head goes to what is there (%s)" % body.gaze_kind())
+	body.sight = Callable()
 	body.set_karada_state("sit")
 	_check(puppet.playing() == "sit" and body.layer() == "", "sit: she sits (%s)" % puppet.playing())
 	body.set_karada_state("crouch")

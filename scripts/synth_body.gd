@@ -12,6 +12,8 @@ extends CharacterBody3D
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
+const SynthRoutines := preload("res://mods/xenu.synth_rift/scripts/synth_routines.gd")
+const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 
 const WALK_SPEED := 1.1
@@ -53,6 +55,15 @@ var _capture: AudioEffectCapture = null
 ## Set by the Summoner: (query: String) -> Dictionary of the nearest thing in the room called that
 ## ({name, label, type, systemid, powered, position}), or {}. "player" is handled here.
 var world_lookup: Callable = Callable()
+## What she sees in front of her right now (the summoner knows the room): an Array of placed entities.
+var sight: Callable = Callable()
+## A picture from her eyes at a point, when pictures are on: a coroutine, {ok, jpeg_b64} (see take_picture).
+var picture_taker: Callable = Callable()
+## What she does on her own once asked (look for, fetch, watch the TV): the model is told the result afterwards.
+var routines: Node = null
+## Her head going now and then to something that is really there (a probe that measures her gaze switches it off).
+var idle_curiosity_on := true
+signal routine_done(kind: String, ok: bool, summary: String, data: Dictionary)
 ## Where she is looking: at the player ("player"), at a point she chose ("point"), or nowhere.
 ## A glance is short: the player moving or clicking earns ONE (GLANCE_SECONDS), and then she
 ## ignores them for GLANCE_COOLDOWN, or she would stare like a security camera. She looks at them
@@ -98,6 +109,11 @@ var _chat: Array = []
 
 
 func _ready() -> void:
+	routines = SynthRoutines.new()
+	routines.name = "Routines"
+	routines.body = self
+	routines.done.connect(func(kind: String, ok: bool, summary: String, data: Dictionary) -> void: routine_done.emit(kind, ok, summary, data))
+	add_child(routines)
 	var capsule := MeshInstance3D.new()
 	var mesh := CapsuleMesh.new()
 	mesh.radius = 0.22
@@ -169,6 +185,9 @@ func _process(_delta: float) -> void:
 
 func _physics_process(delta: float) -> void:
 	_update_gaze(delta)
+	_carry(delta)
+	if idle_curiosity_on:
+		routines.idle_curiosity(delta, is_speaking())
 	if _bubble_left > 0.0:
 		_bubble_left -= delta
 		if _bubble_left <= 0.0:
@@ -457,6 +476,11 @@ func swap_puppet(puppet: Node3D) -> void:
 	attach_puppet(puppet)
 
 
+## Where her eyes are above the floor.
+func eye_height() -> float:
+	return float(_puppet.get("height")) * 0.93 if _puppet != null else 1.45
+
+
 func has_puppet() -> bool:
 	return _puppet != null
 
@@ -518,6 +542,9 @@ func _base_anim() -> String:
 ## her hands do. It goes on while she walks, and on whatever she is doing with her legs. It does not go on
 ## while she greets, arrives or leaves: those are the whole body's.
 func _wanted_layer() -> String:
+	if _puppet != null and _held != null and _one_shot == "" and not _ethereal and _presence != "summon" \
+			and bool(_puppet.call("has_clip", "gaming")):
+		return "gaming"  # her hands together in front of her: she holds something in both
 	if _puppet == null or _one_shot != "" or _ethereal or _presence == "summon" or _karada_state == "idle":
 		return ""
 	if not bool(_puppet.call("has_clip", _karada_state)) or not _is_layer(_karada_state):
@@ -764,7 +791,15 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 		# She chose where to look or what to do: the reflex stays out of it for a while.
 		_deliberate_until = Time.get_ticks_msec() + DELIBERATE_MS
 		_look_left = 0.0
+	# What she was doing for the model ends when the model says something else to do with her legs.
+	if action in ["move", "follow"] and routines != null and routines.is_busy():
+		routines.cancel("you were told to %s" % action)
 	match action:
+		"search", "explore", "watch", "pick_up", "hand_over", "bring", "put_down":
+			return routines.start(action, payload)
+		"stop":
+			routines.cancel("you were told to stop")
+			return {"ok": true, "detail": "stopped"}
 		"say":
 			var text := str(payload.get("text", "")).strip_edges()
 			if text.is_empty():
@@ -799,6 +834,135 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 		_:
 			print("[Rift] verb %s is not built yet" % action)
 			return {"ok": false, "detail": "not_implemented_yet: " + action}
+
+
+# ── what she holds ───────────────────────────────────────────────────────────
+#
+# A thing she picks up is carried by moving it (never by changing who owns it in the room): the object is frozen and
+# eased to her hands every frame, and put back as it was when she lets go. While she carries, `release_mode` is
+# UNFROZEN, so that a player who takes it from her hands is not left holding something that will stay frozen in
+# the air when they let go (the pickable would otherwise remember "frozen" as what to go back to).
+
+const NOT_LIFTED := ["RetroTV", "Seat", "Table", "SpeakerPair"]
+const LIFT_MAX_SIZE := 0.6
+
+var _held: Node3D = null
+var _held_name := ""
+var _held_saved: Dictionary = {}
+
+
+func holding() -> String:
+	return _held_name if _held != null and is_instance_valid(_held) else ""
+
+
+## True while she still has it: false once the player took it from her hands.
+func is_holding_still() -> bool:
+	return _held != null and is_instance_valid(_held)
+
+
+func is_walking() -> bool:
+	return _goal != null
+
+
+## Can she lift it? A loose object (a RigidBody3D) no larger than a person carries in two hands, and not furniture.
+func can_hold(node: Node3D) -> bool:
+	if not (node is RigidBody3D):
+		return false
+	var script: Script = node.get_script()
+	if script != null and str(script.get_global_name()) in NOT_LIFTED:
+		return false
+	var top := -INF
+	var big := 0.0
+	for m: Node in node.find_children("*", "GeometryInstance3D", true, false):
+		var box := (m as GeometryInstance3D).get_aabb().size * (m as Node3D).global_transform.basis.get_scale()
+		big = maxf(big, maxf(box.x, maxf(box.y, box.z)))
+	return big <= LIFT_MAX_SIZE and not (node.has_method("is_picked_up") and bool(node.call("is_picked_up")))
+
+
+func hold(node: Node3D, label: String) -> bool:
+	if _held != null or not can_hold(node):
+		return false
+	var rb := node as RigidBody3D
+	_held_saved = {"freeze": rb.freeze, "layer": rb.collision_layer, "mask": rb.collision_mask}
+	if "release_mode" in rb:
+		_held_saved["release_mode"] = rb.get("release_mode")
+		rb.set("release_mode", 0)  # XRToolsPickable.ReleaseMode.UNFROZEN
+	rb.freeze = true
+	rb.collision_layer = 0
+	rb.collision_mask = 0
+	_held = rb
+	_held_name = label
+	print("[Rift] she picks up %s" % label)
+	_refresh_anim()
+	return true
+
+
+## Where her hands are, in the world: the middle of the two, or in front of her chest when she has no body to ask.
+func hand_point() -> Vector3:
+	if _puppet != null and _puppet.has_method("hand_point"):
+		return _puppet.call("hand_point") as Vector3
+	return global_position + Vector3(0.0, 1.0, 0.0) - global_basis.z * 0.35
+
+
+func _carry(delta: float) -> void:
+	if _held == null:
+		return
+	if not is_instance_valid(_held):
+		_held = null
+		_held_name = ""
+		_refresh_anim()
+		return
+	if _held.has_method("is_picked_up") and bool(_held.call("is_picked_up")):
+		# The player has it. Its own bookkeeping is theirs now; only give back what we changed that they do not.
+		print("[Rift] the player took %s from her hands" % _held_name)
+		if _held_saved.has("release_mode") and "release_mode" in _held:
+			_held.set("release_mode", _held_saved["release_mode"])
+		_held = null
+		_held_name = ""
+		_refresh_anim()
+		return
+	var want := hand_point()
+	_held.global_position = _held.global_position.lerp(want, minf(1.0, 12.0 * delta))
+
+
+## Let go of it, on the surface under her hands in front of her (a table, the floor), as it was before she took it.
+func put_down() -> void:
+	if _held == null:
+		return
+	var node := _held
+	if is_instance_valid(node):
+		var from := hand_point() - global_basis.z * 0.25
+		var query := PhysicsRayQueryParameters3D.create(from + Vector3(0, 0.1, 0), from + Vector3(0, -2.0, 0))
+		query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
+		query.exclude = [get_rid()]
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		node.global_position = ((hit["position"] as Vector3) + Vector3(0, 0.08, 0)) if hit.has("position") else from
+		var rb := node as RigidBody3D
+		rb.collision_layer = int(_held_saved.get("layer", rb.collision_layer))
+		rb.collision_mask = int(_held_saved.get("mask", rb.collision_mask))
+		rb.freeze = bool(_held_saved.get("freeze", false))
+		if _held_saved.has("release_mode") and "release_mode" in rb:
+			rb.set("release_mode", _held_saved["release_mode"])
+		rb.linear_velocity = Vector3.ZERO
+		rb.angular_velocity = Vector3.ZERO
+		rb.sleeping = false
+	print("[Rift] she puts down %s" % _held_name)
+	_held = null
+	_held_name = ""
+	_refresh_anim()
+
+
+## Walk to a point; the result of the walk ({ok, detail}). The routines use this, so that they do not cancel themselves.
+func walk_to(point: Vector3) -> Dictionary:
+	return await _move({"x": point.x, "y": point.y, "z": point.z})
+
+
+## A picture from her eyes toward `point` (see the summoner's `_take_picture`): {ok, jpeg_b64}; {ok: false} when
+## pictures are not wired (no window, a headless run) or switched off.
+func take_picture(point: Vector3) -> Dictionary:
+	if not picture_taker.is_valid():
+		return {"ok": false, "detail": "no_camera"}
+	return await picture_taker.call(point)
 
 
 ## What `target` names: the player, or the nearest thing in the room with that name. {} when nothing.
