@@ -538,7 +538,7 @@ func _gaze_roundtrip(body: Node3D) -> void:
 	if _gaze_checked:
 		return
 	_gaze_checked = true
-	# Let their finish whatever they were asked to do (the server is still sending commands), then be still.
+	# Let them finish whatever they were asked to do (the server is still sending commands), then be still.
 	for i in 600:
 		await get_tree().create_timer(0.1).timeout
 		if not is_instance_valid(body):
@@ -560,7 +560,7 @@ func _gaze_roundtrip(body: Node3D) -> void:
 	# ...and a player who keeps moving does not draw another one for a good while.
 	_camera.global_position += Vector3(-0.6, 0, 0)
 	await get_tree().create_timer(1.0).timeout
-	_check(not body.is_gazing(), "a player who keeps moving does not make their stare (the cooldown)")
+	_check(not body.is_gazing(), "a player who keeps moving does not make them stare (the cooldown)")
 	# They decide to look at something: the reflex stays out of it, and their head goes to it.
 	body._glance_cool = 0.0
 	body.act("look_at", {"target": "Crate"})

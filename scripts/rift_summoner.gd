@@ -37,10 +37,11 @@ const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const AssetFetcher := preload("res://mods/xenu.synth_rift/scripts/asset_fetcher.gd")
 const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
+const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.12.0"
+const MOD_VERSION := "0.13.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -102,6 +103,14 @@ var _hum: AudioStreamPlayer3D = null
 var _charge_t := 0.0
 var _open_t := 0.0
 var _link_ready := false
+## The session Synth welcomed this process with, kept ACROSS rooms (a Summoner is freed with its room): the next one's
+## hello names it, and Synth, which kept the session through its disconnect grace, carries on the same conversation.
+## "" after a goodbye (the player sent them back), which ends the session for good.
+static var _resume_session := ""
+static var _resume_room := ""
+## This summon picked a session up, and the room it was in before.
+var _resumed := false
+var _resumed_from := ""
 var _pulse := 0.0
 var _state_clock := 0.0
 var _player_near := false
@@ -332,8 +341,8 @@ func _begin_summon() -> void:
 	var server := RiftSettings.server_of(settings)
 	var url: String = Protocol.socket_url(server, str(settings.get("token", "")))
 	var hello: Dictionary = Protocol.hello(_room_id(), ["motion", "speech"],
-		Protocol.WANTED_ANIMATIONS, MOD_VERSION)
-	print("[Rift] summoning (room=%s)" % _room_id())
+		Protocol.WANTED_ANIMATIONS, MOD_VERSION, _resume_session)
+	print("[Rift] summoning (room=%s%s)" % [_room_id(), ", asking to resume session %s" % _resume_session if _resume_session != "" else ""])
 	_charge_t = 0.0
 	_link_ready = false
 	_assets_state = ""
@@ -374,6 +383,17 @@ func _on_download_progress(url_path: String, got: int, total: int) -> void:
 
 func _on_opened(welcome: Dictionary) -> void:
 	_link_ready = true
+	_resumed = bool(welcome.get("resumed", false))
+	_resumed_from = _resume_room if _resumed else ""
+	var sid := str(welcome.get("session", ""))
+	if sid != "":
+		_resume_session = sid
+		_resume_room = _room_id()
+	print("[Rift] session %s%s" % [sid, (" RESUMED (from room '%s'): the conversation goes on" % _resumed_from) if _resumed else " (new)"])
+	if RiftSettings.forget_pending():
+		_link.send_frame({"type": "forget"})
+		RiftSettings.set_forget_pending(false)
+		print("[Rift] the chat was forgotten while the rift was shut: Synth is told now")
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
@@ -454,7 +474,8 @@ func _arrive() -> void:
 	await _body.act("look", {"target": "player"})
 	if not _still_arriving():
 		return
-	_body.play_once("greet")
+	if not _resumed:
+		_body.play_once("greet")   # the same conversation going on is not greeted again
 	_open_t = 0.0
 	_pulse = 0.0
 	_beam.scale = Vector3.ONE
@@ -549,10 +570,10 @@ func _tell_synth_she_was_summoned() -> void:
 	SummonerView.room_changes(_room_memory, placed, true)
 	_room_seen = true
 	_link.send_frame(Protocol.state(_body.global_position, "", {"entities": _json_entities(placed)}))
-	var text := SummonerView.summoned_text(_room_id(), placed)
+	var text := SummonerView.summoned_text(_room_id(), placed, {"from_room": _resumed_from} if _resumed else {})
 	print("[Rift] telling Synth: %s" % text)
 	_link.send_frame(Protocol.event("summoned", text, "", 1.0,
-		{"room": _room_id(), "seen": _json_entities(placed)}))
+		{"room": _room_id(), "seen": _json_entities(placed), "resumed": _resumed}))
 
 
 ## Send them back: they step into the capsule and dissolve, the rift closes.
@@ -573,9 +594,35 @@ func _dismiss() -> void:
 	_close("switched_off")
 
 
+## The room is going away with this pod: the socket drops WITHOUT a goodbye, so Synth keeps the session for its grace
+## window and the next Summoner (in the next room) can pick it up with `hello.resume`.
+func _exit_tree() -> void:
+	if _link != null and is_instance_valid(_link) and _link.is_open():
+		print("[Rift] the room is closing with the rift open: leaving without a goodbye (session %s can be resumed)" % _resume_session)
+		_link.close_rift("room_change", false)
+
+
+## The pod's menu: forget the chat. The saved log and the body's go at once; Synth is told now when the rift is open,
+## else the moment it next opens. True when it was told at once.
+func forget_chat() -> bool:
+	ChatStore.clear()
+	if _body != null and is_instance_valid(_body):
+		_body.forget_chat()
+	if _link != null and _link.is_open():
+		_link.send_frame({"type": "forget"})
+		RiftSettings.set_forget_pending(false)
+		print("[Rift] the player asked to forget the chat: Synth is told")
+		return true
+	RiftSettings.set_forget_pending(true)
+	print("[Rift] the player asked to forget the chat while the rift is shut: Synth is told when it opens")
+	return false
+
+
 ## Shut the rift and put everything away.
 func _close(reason: String) -> void:
-	_link.close_rift(reason)
+	# The player sent them back: a goodbye, so Synth ends the session instead of waiting for it to come back.
+	_resume_session = ""
+	_link.close_rift(reason, true)
 	_remove_body()
 	_free_fetcher()
 	_stop(_hum)
@@ -587,7 +634,8 @@ func _close(reason: String) -> void:
 ## The rift failed, or was called off, before or during the arrival.
 func _abort(reason: String, with_sound: bool) -> void:
 	print("[Rift] summon ended: %s" % reason)
-	_link.close_rift(reason)
+	_resume_session = ""
+	_link.close_rift(reason, true)
 	_remove_body()
 	_free_fetcher()
 	_stop(_hum)
@@ -784,7 +832,9 @@ func _spawn_body() -> bool:
 	_body.chat_sent.connect(_on_player_wrote)
 	_body.voice_clip.connect(_on_player_spoke)
 	_body.anchor = global_position
+	_body.persist_chat = true
 	host.add_child(_body)
+	_body.load_chat()
 	# Inside the pod, facing out of its front.
 	_body.global_position = floor_spot
 	# The pod's front is +Z and a body faces its own -Z.

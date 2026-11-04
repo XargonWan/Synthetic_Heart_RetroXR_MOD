@@ -4,12 +4,14 @@
 ## Emits:
 ##   settings_changed(server, token)  -- a field was committed (Enter, or focus left it)
 ##   power_pressed                    -- the Open/Close button
+##   forget_chat_pressed              -- "Forget the chat": the panel asks the Summoner, then calls chat_forgotten()
 ##   close_requested                  -- the X
 extends Control
 
 signal close_requested
 signal settings_changed(server: String, token: String)
 signal power_pressed
+signal forget_chat_pressed
 
 const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const BodyCache := preload("res://mods/xenu.synth_rift/scripts/body_cache.gd")
@@ -24,6 +26,7 @@ var _token_edit: LineEdit = null
 var _show_btn: Button = null
 var _status: Label = null
 var _power: Button = null
+var _forget_btn: Button = null
 var _last_server := ""
 var _last_token := ""
 
@@ -73,7 +76,7 @@ func _build_ui() -> void:
 
 	# What they see can go to Synth as a picture (watching the TV, looking around): the player's to allow.
 	var pictures := CheckButton.new()
-	pictures.text = "Let their send pictures of what they see"
+	pictures.text = "Let them send pictures of what they see"
 	pictures.button_pressed = RiftSettings.pictures_on()
 	pictures.toggled.connect(func(on: bool) -> void: RiftSettings.set_pictures(on))
 	root.add_child(pictures)
@@ -86,6 +89,20 @@ func _build_ui() -> void:
 		var n := BodyCache.clear()
 		cache_btn.text = "Forgotten (%d)" % n)
 	root.add_child(cache_btn)
+
+	# What was said stays said (Synth remembers the chat from one summon to the next): this is how the player wipes it,
+	# in the mod's log and on Synth's side.
+	_forget_btn = Button.new()
+	_forget_btn.text = "Forget the chat with Synth"
+	_forget_btn.custom_minimum_size = Vector2(0, 34)
+	_forget_btn.pressed.connect(func() -> void: forget_chat_pressed.emit())
+	root.add_child(_forget_btn)
+
+
+## The answer to the button: Synth was told at once (`told_now`) or will be the moment the rift opens.
+func chat_forgotten(told_now: bool) -> void:
+	if _forget_btn != null:
+		_forget_btn.text = "Chat forgotten" if told_now else "Chat forgotten (Synth is told when the rift opens)"
 
 
 func _field_row(parent: Container, caption: String, placeholder: String) -> LineEdit:

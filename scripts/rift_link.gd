@@ -22,6 +22,8 @@ signal action_received(id: int, action: String, payload: Dictionary)
 signal assets_received(assets: Dictionary)
 ## What Synth's Karada says their avatar is doing: kind ("animation", "audio", "face", ...) and its payload.
 signal karada_received(kind: String, payload: Dictionary)
+## Synth answered a `forget`: whether it cleared anything.
+signal forgotten(ok: bool)
 ## What Synth made of a clip the player recorded (ok=false: `reason` says why there is no text).
 signal transcript_received(id: int, ok: bool, text: String, reason: String)
 
@@ -34,6 +36,8 @@ var state: State = State.CLOSED
 var _peer: WebSocketPeer = null
 var _hello: Dictionary = {}
 var _waited := 0.0
+var _draining: Array = []
+const DRAIN_SECONDS := 2.0
 
 
 func is_open() -> bool:
@@ -69,9 +73,19 @@ func open_rift(url: String, hello: Dictionary) -> bool:
 	return true
 
 
-func close_rift(reason: String = "closed") -> void:
+## Shut the rift. With `goodbye` the server is told it is on purpose (a `bye` frame, flushed before the close): its session
+## ENDS. Without, the socket just goes, and the server keeps the session for its disconnect grace: that is how a room change
+## or a dropped network can be picked up again (`hello.resume`).
+func close_rift(reason: String = "closed", goodbye: bool = false) -> void:
 	if _peer != null:
+		if goodbye and _peer.get_ready_state() == WebSocketPeer.STATE_OPEN and state != State.CONNECTING:
+			_peer.send_text(JSON.stringify({"type": "bye"}))
+			_peer.poll()
+			print("[Rift] goodbye sent: the session ends")
 		_peer.close(1000, reason)
+		_peer.poll()
+		# A peer dropped now would never flush: keep polling it for a moment until it is closed.
+		_draining.append({"peer": _peer, "left": DRAIN_SECONDS})
 	_finish(reason)
 
 
@@ -82,6 +96,7 @@ func send_frame(frame: Dictionary) -> bool:
 
 
 func _process(delta: float) -> void:
+	_drain(delta)
 	if _peer == null:
 		return
 	_peer.poll()
@@ -113,6 +128,16 @@ func _process(delta: float) -> void:
 			_finish("server_closed" if state == State.OPEN else "refused")
 
 
+## Peers that were closed on purpose still get polled until the close handshake is through (or a moment has passed).
+func _drain(delta: float) -> void:
+	for entry: Dictionary in _draining.duplicate():
+		var p: WebSocketPeer = entry["peer"]
+		p.poll()
+		entry["left"] = float(entry["left"]) - delta
+		if p.get_ready_state() == WebSocketPeer.STATE_CLOSED or float(entry["left"]) <= 0.0:
+			_draining.erase(entry)
+
+
 func _on_frame(text: String) -> void:
 	var frame := Protocol.parse(text)
 	if frame.is_empty():
@@ -135,6 +160,9 @@ func _on_frame(text: String) -> void:
 		"transcript":
 			transcript_received.emit(int(frame.get("id", 0)), bool(frame.get("ok", false)),
 				String(frame.get("text", "")), String(frame.get("reason", "")))
+		"forgotten":
+			print("[Rift] Synth forgot the chat (cleared=%s)" % str(frame.get("ok", false)))
+			forgotten.emit(bool(frame.get("ok", false)))
 		"assets":
 			assets_received.emit(frame.get("assets", {}) if frame.get("assets") is Dictionary else {})
 		_:

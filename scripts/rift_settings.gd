@@ -43,6 +43,18 @@ static func set_pictures(on: bool) -> void:
 	print("[Rift] pictures %s" % ("on" if on else "off"))
 
 
+## The player asked to forget the chat while the rift was shut: Synth is told the moment it opens.
+static func forget_pending() -> bool:
+	return bool(JsonStore.read_dict(FILE, MOD_ID).get("forget_pending", false))
+
+
+static func set_forget_pending(on: bool) -> void:
+	var s: Dictionary = JsonStore.read_dict(FILE, MOD_ID)
+	s["forget_pending"] = on
+	DirAccess.make_dir_recursive_absolute(FILE.get_base_dir())
+	JsonStore.write_dict(FILE, s, MOD_ID)
+
+
 ## Write what the player typed. The environment overrides are never written back.
 static func save(server: String, token: String) -> bool:
 	DirAccess.make_dir_recursive_absolute(FILE.get_base_dir())

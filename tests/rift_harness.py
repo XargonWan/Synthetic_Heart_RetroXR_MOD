@@ -136,7 +136,7 @@ async def _drive():
         }
         for what, ok in checks.items():
             print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
-        # They are greeting the player: Karada's states wait until they are done (that is the point), so let their finish.
+        # They are greeting the player: Karada's states wait until they are done (that is the point), so let them finish.
         await asyncio.sleep(7.0)
         # Karada: their avatar thinks, then speaks (a real clip from /media), then is idle again.
         await conn.send_frame({"type": "karada", "kind": "animation", "payload": {"type": "vrm_animation_v2", "state": "think"}})

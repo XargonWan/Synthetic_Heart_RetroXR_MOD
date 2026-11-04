@@ -14,6 +14,7 @@ const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const SynthRoutines := preload("res://mods/xenu.synth_rift/scripts/synth_routines.gd")
 const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
+const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 const SynthNav := preload("res://mods/xenu.synth_rift/scripts/synth_nav.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 const VoiceRecorder := preload("res://mods/xenu.synth_rift/scripts/voice_recorder.gd")
@@ -122,6 +123,8 @@ signal voice_clip(wav: PackedByteArray)
 
 const MAX_CHAT := 60
 var _chat: Array = []
+## Keep the log between summons (ChatStore). Off for a probe: a suite must not write the player's chat.
+var persist_chat := false
 var _recorder := VoiceRecorder.new()
 
 
@@ -916,6 +919,23 @@ func _log_chat(who: String, text: String) -> void:
 	_chat.append({"who": who, "text": text})
 	if _chat.size() > MAX_CHAT:
 		_chat = _chat.slice(_chat.size() - MAX_CHAT)
+	if persist_chat and who != "note":
+		ChatStore.save_lines(_chat)
+	chat_changed.emit()
+
+
+## What was said in the earlier summons comes back with the body (the page shows it, Synth remembers it too).
+func load_chat() -> void:
+	if not persist_chat:
+		return
+	_chat = ChatStore.load_lines()
+	print("[Rift] the chat with Synth: %d earlier line(s) are back" % _chat.size())
+	chat_changed.emit()
+
+
+## Forget what was said (the pod's menu): the log here, empty on the page at once.
+func forget_chat() -> void:
+	_chat = []
 	chat_changed.emit()
 
 

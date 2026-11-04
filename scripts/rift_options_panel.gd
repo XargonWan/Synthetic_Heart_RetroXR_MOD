@@ -60,6 +60,7 @@ func _ensure_ui_connected() -> void:
 	ui.close_requested.connect(hide_panel)
 	ui.settings_changed.connect(_on_settings_changed)
 	ui.power_pressed.connect(_on_power_pressed)
+	ui.forget_chat_pressed.connect(_on_forget_chat)
 	if _summoner.has_signal("status_changed"):
 		_summoner.status_changed.connect(_refresh)
 	_ui_connected = true
@@ -83,6 +84,15 @@ func _refresh() -> void:
 
 func _on_settings_changed(server: String, token: String) -> void:
 	RiftSettings.save(server, token)
+
+
+func _on_forget_chat() -> void:
+	if not is_instance_valid(_summoner) or not _summoner.has_method("forget_chat"):
+		return
+	var told := bool(_summoner.call("forget_chat"))
+	var ui := _get_ui()
+	if ui != null:
+		ui.chat_forgotten(told)
 
 
 func _on_power_pressed() -> void:

@@ -145,7 +145,16 @@ static func trusts_unverified_tls(url: String) -> bool:
 	return url.begins_with("wss://") and is_private_host(host_of(url))
 
 
-static func hello(room: String, capabilities: Array, animations: Array, mod_version: String) -> Dictionary:
+static func hello(room: String, capabilities: Array, animations: Array, mod_version: String,
+		resume: String = "") -> Dictionary:
+	var frame := _hello_frame(room, capabilities, animations, mod_version)
+	# Welcomed before and the socket dropped (a room change, a lost network): name the session to pick it up.
+	if not resume.is_empty():
+		frame["resume"] = resume
+	return frame
+
+
+static func _hello_frame(room: String, capabilities: Array, animations: Array, mod_version: String) -> Dictionary:
 	return {
 		"verbs": IMPLEMENTED_VERBS,
 		"type": "hello",

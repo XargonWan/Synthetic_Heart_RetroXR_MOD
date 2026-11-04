@@ -8,6 +8,8 @@ extends SceneTree
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const View := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
+const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
+const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 
 var _failed := 0
 var _count := 0
@@ -21,6 +23,8 @@ func _init() -> void:
 	_tls()
 	_http()
 	_room()
+	_resume()
+	_chat_memory()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
@@ -201,3 +205,55 @@ func _room() -> void:
 	said = View.room_changes(m7, [tv2, crate2], false, ["TV1", "Crate2"], 4.0, 20.0)
 	_check(said.size() == 1 and str(said[0]).contains("was moved") and str(said[0]).contains("to your left") and not str(said[0]).contains("appeared"), "moved, not gone and appeared (%s)" % str(said))
 	_check(View.room_changes(m7, [tv2, crate2], false, ["TV1", "Crate2"], 40.0, 20.0).is_empty(), "and the old one is never told as gone afterwards")
+
+
+## Picking a session up again after a room change: the hello names it, and the text Synth reads says it is the same
+## conversation (and never has them introduce themselves again).
+func _resume() -> void:
+	var fresh := Protocol.hello("root", [], [], "0.13.0")
+	_check(not fresh.has("resume"), "a first hello names no session")
+	_check(not Protocol.hello("root", [], [], "0.13.0", "").has("resume"), "an empty token is no token")
+	_eq(Protocol.hello("bedroom", [], [], "0.13.0", "abc123")["resume"], "abc123", "a hello after a room change names the session")
+	_eq(Protocol.hello("bedroom", [], [], "0.13.0", "abc123")["type"], "hello", "and is still a hello")
+	var placed: Array = [{"id": "TV1", "name": "TV1", "label": "TV", "type": "RetroTV", "side": "straight ahead", "distance": 2.0, "front": true}]
+	var first := View.summoned_text("root", placed)
+	_check(first.contains("just been summoned") and not first.contains("same conversation"), "a new session is told it was summoned")
+	var moved := View.summoned_text("bedroom", placed, {"from_room": "root"})
+	_check(moved.contains("from the RetroXR room 'root' to the room 'bedroom'") and moved.contains("do not introduce yourself again"), "after a room change: where from, where to, no new introduction (%s)" % moved)
+	var blip := View.summoned_text("root", placed, {"from_room": "root"})
+	_check(blip.contains("cut for a moment") and blip.contains("do not introduce yourself again") and not blip.contains("just been summoned"), "the same room: a blip, not a summoning (%s)" % blip)
+	_check(moved.contains("TV") and blip.contains("TV"), "and still says what is in front of them")
+
+
+## The chat is kept between summons and cleared by the player. The real file is put back at the end.
+func _chat_memory() -> void:
+	var kept := FileAccess.get_file_as_bytes(ChatStore.FILE) if FileAccess.file_exists(ChatStore.FILE) else PackedByteArray()
+	var had := FileAccess.file_exists(ChatStore.FILE)
+	var pending_before := RiftSettings.forget_pending()
+	ChatStore.clear()
+	_eq(ChatStore.load_lines().size(), 0, "a cleared chat is empty")
+	var lines: Array = [{"who": "you", "text": "ciao"}, {"who": "note", "text": "I heard nothing"}, {"who": "synth", "text": "ciao Jay"}]
+	_check(ChatStore.save_lines(lines), "the chat is saved")
+	var back := ChatStore.load_lines()
+	_eq(back.size(), 2, "what was said comes back, the page's own notes do not")
+	_check(back[0]["text"] == "ciao" and back[1]["who"] == "synth", "in order, with who said it")
+	var many: Array = []
+	for i in 100:
+		many.append({"who": "you", "text": "n%d" % i})
+	ChatStore.save_lines(many)
+	var kept_n := ChatStore.load_lines()
+	_check(kept_n.size() == ChatStore.KEEP and kept_n[kept_n.size() - 1]["text"] == "n99", "only the last %d are kept (%d)" % [ChatStore.KEEP, kept_n.size()])
+	ChatStore.clear()
+	_eq(ChatStore.load_lines().size(), 0, "forgetting empties it (control: the line above had %d)" % kept_n.size())
+	# A forget asked while the rift is shut waits for the next open.
+	RiftSettings.set_forget_pending(true)
+	_check(RiftSettings.forget_pending(), "a forget asked with the rift shut is remembered")
+	RiftSettings.set_forget_pending(false)
+	_check(not RiftSettings.forget_pending(), "and stops being owed once told")
+	RiftSettings.set_forget_pending(pending_before)
+	if had:
+		var f := FileAccess.open(ChatStore.FILE, FileAccess.WRITE)
+		f.store_buffer(kept)
+		f.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(ChatStore.FILE))
