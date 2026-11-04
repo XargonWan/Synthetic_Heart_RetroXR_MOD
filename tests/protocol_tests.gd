@@ -171,3 +171,28 @@ func _room() -> void:
 	_check(View.room_changes(mem4, [tv2], true).is_empty(), "first look")
 	_check(View.room_changes(mem4, [tv2, cable]).is_empty(), "a cable coming into view is not told")
 	_check(View.room_changes(mem4, [tv2]).is_empty() and not mem4.has("Cable"), "nor going, and it is not even remembered")
+
+	# A thing that stops existing is told as gone only if it stays gone: it may have been moved.
+	var m5 := {}
+	var crate := {"id": "Crate1", "name": "Crate", "label": "crate", "type": "Node3D", "side": "ahead", "distance": 1.0}
+	View.room_changes(m5, [tv2, crate], true, ["TV1", "Crate1"], 0.0, 20.0)
+	_check(View.room_changes(m5, [tv2], false, ["TV1"], 1.0, 20.0).is_empty(), "gone: not told yet")
+	_check(m5.has("Crate") and m5["Crate"].has("missing_since"), "it is remembered as missing, since when")
+	_check(View.room_changes(m5, [tv2], false, ["TV1"], 10.0, 20.0).is_empty(), "still waiting at 10 s")
+	said = View.room_changes(m5, [tv2], false, ["TV1"], 21.5, 20.0)
+	_check(said.size() == 1 and str(said[0]).contains("crate") and str(said[0]).contains("no longer there"), "told once it stayed gone (%s)" % str(said))
+	_check(not m5.has("Crate"), "and then forgotten")
+	# Back before the delay: nothing to tell.
+	var m6 := {}
+	View.room_changes(m6, [tv2, crate], true, ["TV1", "Crate1"], 0.0, 20.0)
+	View.room_changes(m6, [tv2], false, ["TV1"], 1.0, 20.0)
+	_check(View.room_changes(m6, [tv2, crate], false, ["TV1", "Crate1"], 5.0, 20.0).is_empty(), "it came back: neither gone nor new")
+	_check(not m6["Crate"].has("missing_since"), "and it is no longer waiting")
+	# A copy of the same kind turns up elsewhere meanwhile: it was moved.
+	var m7 := {}
+	var crate2 := {"id": "Crate2", "name": "Crate2", "label": "crate", "type": "Node3D", "side": "to your left", "distance": 2.0}
+	View.room_changes(m7, [tv2, crate], true, ["TV1", "Crate1"], 0.0, 20.0)
+	View.room_changes(m7, [tv2], false, ["TV1"], 1.0, 20.0)
+	said = View.room_changes(m7, [tv2, crate2], false, ["TV1", "Crate2"], 4.0, 20.0)
+	_check(said.size() == 1 and str(said[0]).contains("was moved") and str(said[0]).contains("to your left") and not str(said[0]).contains("appeared"), "moved, not gone and appeared (%s)" % str(said))
+	_check(View.room_changes(m7, [tv2, crate2], false, ["TV1", "Crate2"], 40.0, 20.0).is_empty(), "and the old one is never told as gone afterwards")

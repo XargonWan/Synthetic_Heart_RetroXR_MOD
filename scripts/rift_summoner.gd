@@ -43,6 +43,8 @@ const PLAYER_NAME := "player"
 const MOD_VERSION := "0.11.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
+## A thing that stops existing is told as gone only after this long: it may only have been moved.
+const GONE_DELAY_SECONDS := 20.0
 const MAX_SIGHTINGS := 3
 const SIGHTING_SALIENCE := 0.45
 ## How far the body may be from this, and how far it looks for things to tell Synth about.
@@ -946,7 +948,8 @@ func _watch_room() -> void:
 	var existing: Array = []
 	for e: Dictionary in _entities():
 		existing.append(str(e.get("id", "")))
-	var said: Array = SummonerView.room_changes(_room_memory, _placed_entities(), first, existing)
+	var said: Array = SummonerView.room_changes(_room_memory, _placed_entities(), first, existing,
+			float(Time.get_ticks_msec()) / 1000.0, GONE_DELAY_SECONDS)
 	for line: Variant in said.slice(0, MAX_SIGHTINGS):
 		print("[Rift] sighting: %s" % str(line))
 		_link.send_frame(Protocol.event("sighting", str(line), "", SIGHTING_SALIENCE))

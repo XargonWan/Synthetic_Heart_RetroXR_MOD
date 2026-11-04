@@ -102,13 +102,19 @@ const QUIET_KINDS := ["cable", "link cable", "power cord"]
 
 
 ## What changed in the room since the last look, in words: something new in view, something gone, a machine switched
-## on or off. `memory` ({name: {label, powered, id}}) is what she saw last time and is brought up to date; the first
-## call only remembers (nothing is "new" to someone who has just arrived). The player is not part of it.
+## on or off. `memory` ({name: {label, powered, id, missing_since?}}) is what she saw last time and is brought up to
+## date; the first call only remembers (nothing is "new" to someone who has just arrived). The player is not part of it.
 ##
 ## `existing_ids` (the ids of everything in the room, in view or not): a thing she no longer sees but that still exists
 ## went out of SIGHT, it is not gone, so nothing is said and it is remembered as it was (turning her head used to make
 ## the whole room "no longer there"). Empty = unknown, and the old rule holds. Cords are never reported.
-static func room_changes(memory: Dictionary, placed: Array, first_look: bool = false, existing_ids: Array = []) -> Array:
+##
+## `gone_delay` (seconds, measured on `clock`): a thing that stops existing is NOT declared gone at once. It may have
+## been picked up and set down, or swapped for a new copy of itself; so it waits, remembered as "missing since", and
+## is told as gone only if it is still missing after the delay. Back before then = nothing to tell; a thing of the same
+## kind that shows up meanwhile is "moved", not a disappearance and an arrival. 0 = tell at once.
+static func room_changes(memory: Dictionary, placed: Array, first_look: bool = false, existing_ids: Array = [],
+		clock: float = 0.0, gone_delay: float = 0.0) -> Array:
 	var said: Array = []
 	var now: Dictionary = {}
 	for e: Dictionary in placed:
@@ -116,23 +122,50 @@ static func room_changes(memory: Dictionary, placed: Array, first_look: bool = f
 			continue
 		var key := str(e.get("name", ""))
 		now[key] = e
+	# What is waiting to be declared gone, by label: a newcomer of the same kind is that thing, moved.
+	var pending_by_label: Dictionary = {}
+	for key: String in memory.keys():
+		if memory[key].has("missing_since") and not now.has(key):
+			pending_by_label[str(memory[key].get("label", key))] = key
+	var moved_from: Array = []
+	for key: String in now:
+		var e: Dictionary = now[key]
 		var label := str(e.get("label", key))
 		if not memory.has(key):
-			if not first_look:
+			if first_look:
+				continue
+			if pending_by_label.has(label):
+				moved_from.append(pending_by_label[label])
+				pending_by_label.erase(label)
+				said.append("The %s was moved %s, %.1f m away." % [label, str(e.get("side", "nearby")), float(e.get("distance", 0.0))])
+			else:
 				said.append("%s has appeared %s, %.1f m away." % [_with_article(label), str(e.get("side", "nearby")), float(e.get("distance", 0.0))])
 		elif e.has("powered") and memory[key].has("powered") and bool(e["powered"]) != bool(memory[key]["powered"]):
 			said.append("The %s was switched %s." % [label, "on" if bool(e["powered"]) else "off"])
-	var out_of_sight: Dictionary = {}
+	var kept: Dictionary = {}
 	for key: String in memory.keys():
-		if now.has(key) or first_look:
+		if now.has(key) or first_look or key in moved_from:
 			continue
-		if not existing_ids.is_empty() and existing_ids.has(str(memory[key].get("id", ""))):
-			out_of_sight[key] = memory[key]
+		var entry: Dictionary = memory[key]
+		if not existing_ids.is_empty() and existing_ids.has(str(entry.get("id", ""))):
+			var seen_again: Dictionary = entry.duplicate()
+			seen_again.erase("missing_since")
+			kept[key] = seen_again
 			continue
-		said.append("The %s is no longer there." % str(memory[key].get("label", key)))
+		if gone_delay <= 0.0:
+			said.append("The %s is no longer there." % str(entry.get("label", key)))
+			continue
+		if not entry.has("missing_since"):
+			entry = entry.duplicate()
+			entry["missing_since"] = clock
+			kept[key] = entry
+		elif clock - float(entry["missing_since"]) >= gone_delay:
+			said.append("The %s is no longer there." % str(entry.get("label", key)))
+		else:
+			kept[key] = entry
 	memory.clear()
-	for key: String in out_of_sight:
-		memory[key] = out_of_sight[key]
+	for key: String in kept:
+		memory[key] = kept[key]
 	for key: String in now:
 		var e: Dictionary = now[key]
 		memory[key] = {"label": str(e.get("label", key)), "powered": e.get("powered", null), "id": str(e.get("id", ""))}
