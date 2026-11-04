@@ -13,12 +13,24 @@ extends Node
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const CACHE_DIR := "user://mods/xenu.synth_rift/cache"
-const TIMEOUT_SEC := 60.0
+## A download is given up on when NO byte has arrived for this long (not when it has taken long: her model is 25 MB, and a
+## home server over wifi gave 85-250 KB/s, which a fixed 60 s total cut off every time and left her a blue capsule).
+const STALL_SEC := 20.0
+## Whatever happens, one request is over after this long.
+const MAX_SEC := 900.0
+const POLL_SEC := 0.25
+## A request that fails on the network is tried once more (an HTTP answer, 404 and the like, is not).
+const ATTEMPTS := 2
+
+## How far a download got: `got` bytes of `total` (-1 when the server did not say).
+signal progress(url_path: String, got: int, total: int)
 
 var base := ""
 var token := ""
 var _manifest: Dictionary = {}
 var _manifest_tried := false
+## Settable so a probe can watch the watchdog without waiting 20 s.
+var stall_sec := STALL_SEC
 
 
 func setup(server: String, password: String) -> void:
@@ -80,8 +92,19 @@ func _load_manifest() -> void:
 
 
 func _fetch(url: String) -> PackedByteArray:
+	for attempt in ATTEMPTS:
+		var out := await _fetch_once(url)
+		if bool(out["done"]):
+			return out["bytes"] as PackedByteArray
+		print("[Rift] attempt %d of %d failed: %s" % [attempt + 1, ATTEMPTS, url])
+	return PackedByteArray()
+
+
+## One request, watched: {done: false} means "worth another try" (network trouble or a stall), done with no bytes is
+## the server's answer (not found, refused) and final.
+func _fetch_once(url: String) -> Dictionary:
 	var req := HTTPRequest.new()
-	req.timeout = TIMEOUT_SEC
+	req.timeout = 0.0
 	req.accept_gzip = true
 	add_child(req)
 	if Protocol.trusts_unverified_tls(url.replace("https://", "wss://")):
@@ -89,14 +112,47 @@ func _fetch(url: String) -> PackedByteArray:
 	var headers := PackedStringArray()
 	if not token.is_empty():
 		headers.append("Authorization: Bearer " + token)
+	var answer: Array = []
+	req.request_completed.connect(func(r: int, c: int, h: PackedStringArray, b: PackedByteArray) -> void:
+		answer.assign([r, c, h, b]))
 	var err := req.request(url, headers)
 	if err != OK:
 		print("[Rift] request failed (%s): %s" % [error_string(err), url])
 		req.queue_free()
-		return PackedByteArray()
-	var result: Array = await req.request_completed
+		return {"done": true, "bytes": PackedByteArray()}
+	var last := 0
+	var idle := 0.0
+	var elapsed := 0.0
+	# A timer of our own (a child): if the fetcher is freed mid-download it is freed with it and this simply never
+	# resumes, instead of resuming on an object that is gone.
+	var tick := Timer.new()
+	tick.wait_time = POLL_SEC
+	add_child(tick)
+	tick.start()
+	while answer.is_empty():
+		await tick.timeout
+		elapsed += POLL_SEC
+		var got := req.get_downloaded_bytes()
+		if got > last:
+			last = got
+			idle = 0.0
+			progress.emit(url.trim_prefix(base), got, req.get_body_size())
+		else:
+			idle += POLL_SEC
+		if idle >= stall_sec or elapsed >= MAX_SEC:
+			print("[Rift] GET %s gave up: %s after %d bytes (%.0f s)" % [url, "nothing arrived for %.0f s" % idle if idle >= stall_sec else "too long", last, elapsed])
+			req.cancel_request()
+			req.queue_free()
+			tick.queue_free()
+			return {"done": false, "bytes": PackedByteArray()}
+	tick.queue_free()
 	req.queue_free()
-	if int(result[0]) != HTTPRequest.RESULT_SUCCESS or int(result[1]) != 200:
-		print("[Rift] GET %s -> result %d, HTTP %d" % [url, int(result[0]), int(result[1])])
-		return PackedByteArray()
-	return result[3] as PackedByteArray
+	var result: int = int(answer[0])
+	var code: int = int(answer[1])
+	if result != HTTPRequest.RESULT_SUCCESS:
+		print("[Rift] GET %s -> result %d, HTTP %d" % [url, result, code])
+		return {"done": false, "bytes": PackedByteArray()}
+	if code != 200:
+		print("[Rift] GET %s -> result %d, HTTP %d" % [url, result, code])
+		return {"done": true, "bytes": PackedByteArray()}
+	return {"done": true, "bytes": answer[3] as PackedByteArray}

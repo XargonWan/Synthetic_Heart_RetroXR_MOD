@@ -343,6 +343,7 @@ func _begin_summon() -> void:
 	_fetcher.name = "AssetFetcher"
 	add_child(_fetcher)
 	_fetcher.call("setup", server, str(settings.get("token", "")))
+	_fetcher.connect("progress", _on_download_progress)
 	_karada_state = "idle"
 	_set_phase(Phase.CHARGING)
 	_set_status("Connecting to %s ..." % server, false)
@@ -359,6 +360,16 @@ func _begin_summon() -> void:
 func _on_rise_finished() -> void:
 	if _phase == Phase.CHARGING:
 		_play(_hum, "hum")
+
+
+## A big file (her model) is on its way: say how far, on the menu and on the pod's screen.
+func _on_download_progress(url_path: String, got: int, total: int) -> void:
+	if total < 1_000_000 or _phase != Phase.CHARGING:
+		return
+	var pct := int(100.0 * float(got) / float(total))
+	_set_status("Rift open: loading Synth's body ... %d%% (%.0f of %.0f MB)" % [pct, got / 1048576.0, total / 1048576.0], false)
+	if pct % 5 == 0:
+		_screen_text("BODY %d%%" % pct)
 
 
 func _on_opened(welcome: Dictionary) -> void:
