@@ -12,6 +12,7 @@ const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const RiftLink := preload("res://mods/xenu.synth_rift/scripts/rift_link.gd")
 const SynthBody := preload("res://mods/xenu.synth_rift/scripts/synth_body.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
+const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 
 var _link: Node
 var _body: CharacterBody3D
@@ -48,6 +49,18 @@ func _initialize() -> void:
 		var a: Dictionary = w.get("assets", {})
 		print("[probe] opened session=%s skin=%s model=%s" % [str(w.get("session")), str(a.get("skin")),
 			str((a.get("model", {}) as Dictionary).get("url"))]))
+	# The player speaks: a second of tone as a clip. Synth's side answers with the words (a stand-in for Auris).
+	_link.opened.connect(func(_w: Dictionary) -> void:
+		await create_timer(1.0).timeout
+		var tone := PackedVector2Array()
+		for i in 24000:
+			var v := 0.4 * sin(TAU * 300.0 * float(i) / 24000.0)
+			tone.append(Vector2(v, v))
+		var wav := AudioBytes.wav_from_frames(tone, 24000.0)
+		print("[probe] sending a clip of %d bytes" % wav.size())
+		_link.send_frame(Protocol.audio(1, wav, "player")))
+	_link.transcript_received.connect(func(id: int, ok: bool, text: String, reason: String) -> void:
+		print("[probe] transcript %d ok=%s text=%s reason=%s" % [id, str(ok), text, reason]))
 	_link.closed.connect(func(reason: String) -> void:
 		print("[probe] closed: %s" % reason)
 		quit(0))

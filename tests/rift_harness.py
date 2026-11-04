@@ -47,6 +47,21 @@ class FakePlugin:
 
 
 core_initializer.PLUGIN_REGISTRY["vessel_plugin"] = FakePlugin()
+
+
+class FakeAuris:
+    """Her ears, without an engine: reads the WAV the mod sent (a real file) and says what it was."""
+    heard = []
+
+    async def transcribe_audio(self, file_path, mime_type=None, engine_name=None):
+        import wave
+        from plugins.auris_base import AurisTranscriptResult
+        with wave.open(file_path, "rb") as w:
+            FakeAuris.heard.append((w.getframerate(), w.getnchannels(), w.getnframes()))
+        return AurisTranscriptResult(text="bring me the game boy", language="en")
+
+
+core_initializer.PLUGIN_REGISTRY["auris_plugin"] = FakeAuris()
 app = FastAPI()
 app.include_router(vessel_retroxr_api.create_retroxr_router())
 
@@ -94,6 +109,13 @@ async def _drive():
     else:
         print("[synth] NEVER CONNECTED"); return
     print("[synth] rift open; hello =", conn._hello)
+    if os.environ.get("PROBE") != "summoner":
+        # The player speaks to her: the clip the probe sends must come out as a chat line.
+        chat = await wait_event("chat", timeout=10.0)
+        ok = (chat is not None and chat.summary == "player: bring me the game boy" and chat.actor == "player"
+              and (chat.data or {}).get("via") == "voice" and FakeAuris.heard == [(16000, 1, 16000)])
+        print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} voice: a spoken clip became a chat line "
+              f"({chat.summary if chat else None!r}, wav={FakeAuris.heard})")
     if os.environ.get("PROBE") == "summoner":
         # The Summoner brings her out of the capsule before anything else happens.
         for _ in range(300):

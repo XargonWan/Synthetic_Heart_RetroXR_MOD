@@ -22,6 +22,8 @@ signal action_received(id: int, action: String, payload: Dictionary)
 signal assets_received(assets: Dictionary)
 ## What Synth's Karada says her avatar is doing: kind ("animation", "audio", "face", ...) and its payload.
 signal karada_received(kind: String, payload: Dictionary)
+## What Synth made of a clip the player recorded (ok=false: `reason` says why there is no text).
+signal transcript_received(id: int, ok: bool, text: String, reason: String)
 
 ## No welcome within this long after the socket opens: give up.
 const WELCOME_TIMEOUT_SEC := 15.0
@@ -130,6 +132,9 @@ func _on_frame(text: String) -> void:
 		"karada":
 			karada_received.emit(String(frame.get("kind", "")),
 				frame.get("payload", {}) if frame.get("payload") is Dictionary else {})
+		"transcript":
+			transcript_received.emit(int(frame.get("id", 0)), bool(frame.get("ok", false)),
+				String(frame.get("text", "")), String(frame.get("reason", "")))
 		"assets":
 			assets_received.emit(frame.get("assets", {}) if frame.get("assets") is Dictionary else {})
 		_:

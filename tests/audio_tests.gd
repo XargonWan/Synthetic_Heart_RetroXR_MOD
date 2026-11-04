@@ -42,8 +42,34 @@ func _init() -> void:
 	_check(AudioBytes.stream_from(_wav(pcm16, 6, 22050, 16)) == null, "six channels are not played")
 	var no_data := _wav(pcm16, 1, 22050, 16)
 	_check(AudioBytes.stream_from(no_data.slice(0, 40)) == null, "a WAV cut off before its samples")
+	_recording()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	quit(1 if _failed > 0 or _count == 0 else 0)
+
+
+## What the player said, as a WAV: mixed to mono, brought down to 16 kHz, a header Synth (and our own reader) accept.
+func _recording() -> void:
+	_check(AudioBytes.wav_from_frames(PackedVector2Array(), 48000.0).is_empty(), "no frames is an empty clip")
+	_check(AudioBytes.wav_from_frames(PackedVector2Array([Vector2.ONE]), 0.0).is_empty(), "a rate of nothing is an empty clip")
+	var frames := PackedVector2Array()
+	for i in 48000:  # one second of a 440 Hz tone at 48 kHz, louder on the left
+		var v := sin(TAU * 440.0 * float(i) / 48000.0)
+		frames.append(Vector2(v * 0.8, v * 0.2))
+	var wav := AudioBytes.wav_from_frames(frames, 48000.0)
+	_check(wav.size() == 44 + 16000 * 2, "one second at 16 kHz mono 16-bit is %d bytes (%d)" % [44 + 32000, wav.size()])
+	_check(wav.slice(0, 4).get_string_from_ascii() == "RIFF" and wav.slice(8, 12).get_string_from_ascii() == "WAVE", "a RIFF/WAVE header")
+	_check(wav.decode_u32(4) == wav.size() - 8 and wav.decode_u32(40) == wav.size() - 44, "its sizes agree with the bytes")
+	var back := AudioBytes.stream_from(wav) as AudioStreamWAV
+	_check(back != null and not back.stereo and back.mix_rate == 16000 and back.format == AudioStreamWAV.FORMAT_16_BITS, "our own reader plays it back")
+	if back != null:
+		_check(absf(back.get_length() - 1.0) < 0.01, "and it is one second long (%.3f)" % back.get_length())
+		var peak := 0
+		for i in range(0, back.data.size() - 1, 2):
+			peak = maxi(peak, absi(back.data.decode_s16(i)))
+		# the left/right mix of 0.8 and 0.2 is 0.5: about 16384, neither silent nor clipped
+		_check(peak > 14000 and peak < 18000, "the two channels are averaged, not one dropped (peak %d)" % peak)
+	var loud := AudioBytes.wav_from_frames(PackedVector2Array([Vector2(5.0, 5.0), Vector2(-5.0, -5.0)]), 16000.0)
+	_check(loud.decode_s16(44) == 32767 and loud.decode_s16(46) == -32767, "samples past full scale are clamped, never wrapped")
 
 
 ## A WAV file around `pcm`.

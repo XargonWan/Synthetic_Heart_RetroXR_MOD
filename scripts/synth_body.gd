@@ -15,6 +15,7 @@ const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.
 const SynthRoutines := preload("res://mods/xenu.synth_rift/scripts/synth_routines.gd")
 const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
+const VoiceRecorder := preload("res://mods/xenu.synth_rift/scripts/voice_recorder.gd")
 
 const WALK_SPEED := 1.1
 const ARRIVE_DISTANCE := 0.35
@@ -104,8 +105,14 @@ signal chat_changed
 ## The player wrote this to her: the Summoner sends it to Synth.
 signal chat_sent(text: String)
 
+## The mic was pressed or let go: the chat page shows whether she is listening.
+signal voice_changed(recording: bool)
+## The player's voice, recorded and ended (a WAV): the Summoner sends it to Synth.
+signal voice_clip(wav: PackedByteArray)
+
 const MAX_CHAT := 60
 var _chat: Array = []
+var _recorder := VoiceRecorder.new()
 
 
 func _ready() -> void:
@@ -181,6 +188,9 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_lip_sync()
+	if _recorder.is_recording() and _recorder.seconds() >= VoiceRecorder.MAX_SECONDS:
+		print("[Rift] voice: %.0f s is the longest a clip goes; sending what was said" % VoiceRecorder.MAX_SECONDS)
+		toggle_voice()
 
 
 func _physics_process(delta: float) -> void:
@@ -769,6 +779,44 @@ func send_chat(text: String) -> void:
 		return
 	_log_chat("you", t)
 	chat_sent.emit(t)
+
+
+func voice_recording() -> bool:
+	return _recorder.is_recording()
+
+
+## The mic of the chat page: first press starts listening, the next ends it and sends what was said.
+func toggle_voice() -> void:
+	if _recorder.is_recording():
+		var wav := _recorder.stop()
+		voice_changed.emit(false)
+		if wav.is_empty():
+			_log_chat("note", "I heard nothing. Is the microphone switched on in the options?")
+			return
+		voice_clip.emit(wav)
+		return
+	_recorder.head_source = func() -> Vector3:
+		var cam := get_viewport().get_camera_3d()
+		return cam.global_position if cam != null else global_position
+	if _recorder.start(get_tree()):
+		voice_changed.emit(true)
+	else:
+		_log_chat("note", "There is no microphone to listen with.")
+
+
+## What Synth made of the clip: her ears' answer. The words go into the log as the player's own; a failure is a note.
+func heard(ok: bool, text: String, reason: String) -> void:
+	if ok and not text.is_empty():
+		_log_chat("you", text)
+		return
+	var why := {
+		"no_stt": "Synth has no speech recognition set up.",
+		"nothing_heard": "I could not make out any words.",
+		"too_long": "That was too long to send.",
+		"stt_failed": "The speech recognition failed.",
+		"bad_clip": "That recording could not be read.",
+	}
+	_log_chat("note", str(why.get(reason, "I could not hear that (%s)." % reason)))
 
 
 func _log_chat(who: String, text: String) -> void:

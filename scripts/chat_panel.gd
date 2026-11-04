@@ -57,6 +57,12 @@ func _ensure_ui_connected() -> void:
 	ui.message_sent.connect(func(text: String) -> void:
 		if is_instance_valid(_body):
 			_body.send_chat(text))
+	ui.mic_pressed.connect(func() -> void:
+		if is_instance_valid(_body):
+			_body.toggle_voice())
+	if _body.has_signal("voice_changed"):
+		_body.voice_changed.connect(ui.set_recording)
+		ui.set_recording(_body.voice_recording())
 	if _body.has_signal("chat_changed"):
 		_body.chat_changed.connect(_refresh)
 	_ui_connected = true

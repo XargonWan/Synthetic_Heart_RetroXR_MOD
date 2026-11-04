@@ -69,3 +69,40 @@ static func _wav(bytes: PackedByteArray) -> AudioStreamWAV:
 ## Seconds in a stream, when it knows (a WAV does by counting).
 static func seconds_of(stream: AudioStream) -> float:
 	return stream.get_length() if stream != null else 0.0
+
+
+## What the player said, as a WAV Synth can read: `frames` are the microphone's (stereo float pairs at `rate`),
+## mixed to mono and averaged down to `target_rate` (speech needs 16 kHz, not 48), 16-bit PCM with a 44-byte header.
+## Empty frames (or a rate of nothing) are an empty result, never a malformed file.
+static func wav_from_frames(frames: PackedVector2Array, rate: float, target_rate: int = 16000) -> PackedByteArray:
+	if frames.is_empty() or rate <= 0.0 or target_rate <= 0:
+		return PackedByteArray()
+	var step := rate / float(target_rate)
+	var count := maxi(int(floor(float(frames.size()) / maxf(step, 1.0))), 1) if step >= 1.0 else frames.size()
+	var pcm := PackedByteArray()
+	pcm.resize(count * 2)
+	for i in count:
+		var from := int(floor(float(i) * step))
+		var to := mini(maxi(int(floor(float(i + 1) * step)), from + 1), frames.size())
+		var sum := 0.0
+		for j in range(from, to):
+			sum += (frames[j].x + frames[j].y) * 0.5
+		var v := clampf(sum / float(to - from), -1.0, 1.0)
+		pcm.encode_s16(i * 2, int(round(v * 32767.0)))
+	var out := PackedByteArray()
+	out.resize(44)
+	out.encode_u32(0, 0x46464952)  # "RIFF"
+	out.encode_u32(4, 36 + pcm.size())
+	out.encode_u32(8, 0x45564157)  # "WAVE"
+	out.encode_u32(12, 0x20746d66)  # "fmt "
+	out.encode_u32(16, 16)
+	out.encode_u16(20, 1)  # PCM
+	out.encode_u16(22, 1)  # mono
+	out.encode_u32(24, target_rate)
+	out.encode_u32(28, target_rate * 2)
+	out.encode_u16(32, 2)
+	out.encode_u16(34, 16)
+	out.encode_u32(36, 0x61746164)  # "data"
+	out.encode_u32(40, pcm.size())
+	out.append_array(pcm)
+	return out

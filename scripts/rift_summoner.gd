@@ -40,7 +40,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.10.0"
+const MOD_VERSION := "0.11.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 const MAX_SIGHTINGS := 3
@@ -157,6 +157,7 @@ func _ready() -> void:
 	_link.closed.connect(_on_closed)
 	_link.action_received.connect(_on_action)
 	_link.karada_received.connect(_on_karada)
+	_link.transcript_received.connect(_on_transcript)
 	_button.button_pressed.connect(_on_screen_touched)
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
 	# Set it down by aiming at the floor: a yellow rectangle shows where it will stand.
@@ -500,6 +501,26 @@ func _on_player_wrote(text: String) -> void:
 	print("[Rift] the player wrote: %s" % text)
 
 
+var _clip_ids := 0
+
+
+## The player spoke to her (the mic of the chat page): the clip goes to Synth, who hears it with her own ears
+## (Auris) and answers with the words; they then reach her as a chat line, exactly like typed ones.
+func _on_player_spoke(wav: PackedByteArray) -> void:
+	if _link == null or not _link.is_open():
+		_body.heard(false, "", "stt_failed")
+		return
+	_clip_ids += 1
+	_link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
+	print("[Rift] the player spoke: clip %d, %d bytes" % [_clip_ids, wav.size()])
+
+
+func _on_transcript(id: int, ok: bool, text: String, reason: String) -> void:
+	print("[Rift] clip %d heard: ok=%s %s" % [id, str(ok), text if ok else reason])
+	if _body != null and is_instance_valid(_body):
+		_body.heard(ok, text, reason)
+
+
 func _still_arriving() -> bool:
 	return _phase == Phase.ARRIVING and _body != null and is_instance_valid(_body) and _link.is_open()
 
@@ -743,6 +764,7 @@ func _spawn_body() -> bool:
 	_body = SynthBody.new()
 	_body.name = "SynthBody"
 	_body.chat_sent.connect(_on_player_wrote)
+	_body.voice_clip.connect(_on_player_spoke)
 	_body.anchor = global_position
 	host.add_child(_body)
 	# Inside the pod, facing out of its front.
@@ -921,7 +943,10 @@ func _on_routine_done(kind: String, ok: bool, summary: String, data: Dictionary)
 func _watch_room() -> void:
 	var first := _room_memory.is_empty() and not _room_seen
 	_room_seen = true
-	var said: Array = SummonerView.room_changes(_room_memory, _placed_entities(), first)
+	var existing: Array = []
+	for e: Dictionary in _entities():
+		existing.append(str(e.get("id", "")))
+	var said: Array = SummonerView.room_changes(_room_memory, _placed_entities(), first, existing)
 	for line: Variant in said.slice(0, MAX_SIGHTINGS):
 		print("[Rift] sighting: %s" % str(line))
 		_link.send_frame(Protocol.event("sighting", str(line), "", SIGHTING_SALIENCE))

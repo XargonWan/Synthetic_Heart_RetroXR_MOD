@@ -97,14 +97,22 @@ static func _label(e: Dictionary) -> String:
 	return "%s (%s)" % [label, sid] if not sid.is_empty() else label
 
 
+## Kinds that are dragged about by hand and by physics all the time: a cord leaving or entering her view is not news.
+const QUIET_KINDS := ["cable", "link cable", "power cord"]
+
+
 ## What changed in the room since the last look, in words: something new in view, something gone, a machine switched
-## on or off. `memory` ({name: {label, powered}}) is what she saw last time and is brought up to date; the first
+## on or off. `memory` ({name: {label, powered, id}}) is what she saw last time and is brought up to date; the first
 ## call only remembers (nothing is "new" to someone who has just arrived). The player is not part of it.
-static func room_changes(memory: Dictionary, placed: Array, first_look: bool = false) -> Array:
+##
+## `existing_ids` (the ids of everything in the room, in view or not): a thing she no longer sees but that still exists
+## went out of SIGHT, it is not gone, so nothing is said and it is remembered as it was (turning her head used to make
+## the whole room "no longer there"). Empty = unknown, and the old rule holds. Cords are never reported.
+static func room_changes(memory: Dictionary, placed: Array, first_look: bool = false, existing_ids: Array = []) -> Array:
 	var said: Array = []
 	var now: Dictionary = {}
 	for e: Dictionary in placed:
-		if str(e.get("type", "")) == "player":
+		if str(e.get("type", "")) == "player" or str(e.get("type", "")) in QUIET_KINDS:
 			continue
 		var key := str(e.get("name", ""))
 		now[key] = e
@@ -114,13 +122,20 @@ static func room_changes(memory: Dictionary, placed: Array, first_look: bool = f
 				said.append("%s has appeared %s, %.1f m away." % [_with_article(label), str(e.get("side", "nearby")), float(e.get("distance", 0.0))])
 		elif e.has("powered") and memory[key].has("powered") and bool(e["powered"]) != bool(memory[key]["powered"]):
 			said.append("The %s was switched %s." % [label, "on" if bool(e["powered"]) else "off"])
+	var out_of_sight: Dictionary = {}
 	for key: String in memory.keys():
-		if not now.has(key) and not first_look:
-			said.append("The %s is no longer there." % str(memory[key].get("label", key)))
+		if now.has(key) or first_look:
+			continue
+		if not existing_ids.is_empty() and existing_ids.has(str(memory[key].get("id", ""))):
+			out_of_sight[key] = memory[key]
+			continue
+		said.append("The %s is no longer there." % str(memory[key].get("label", key)))
 	memory.clear()
+	for key: String in out_of_sight:
+		memory[key] = out_of_sight[key]
 	for key: String in now:
 		var e: Dictionary = now[key]
-		memory[key] = {"label": str(e.get("label", key)), "powered": e.get("powered", null)}
+		memory[key] = {"label": str(e.get("label", key)), "powered": e.get("powered", null), "id": str(e.get("id", ""))}
 		if not e.has("powered"):
 			memory[key].erase("powered")
 	return said

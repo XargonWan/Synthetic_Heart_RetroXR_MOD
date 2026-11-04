@@ -7,6 +7,8 @@ extends Control
 
 signal message_sent(text: String)
 signal close_requested
+## The mic: first press starts listening, the next ends it and sends what was said.
+signal mic_pressed
 
 const COLOR_BG := Color(0.08, 0.08, 0.16, 0.96)
 const COLOR_YOU := "#9fb3ff"
@@ -15,6 +17,7 @@ const MAX_LINES := 60
 
 var _log: RichTextLabel = null
 var _edit: LineEdit = null
+var _mic: Button = null
 var _lines: Array = []
 
 
@@ -46,6 +49,12 @@ func _ready() -> void:
 	_edit.add_theme_font_size_override("font_size", 18)
 	_edit.text_submitted.connect(func(_t: String) -> void: _send())
 	row.add_child(_edit)
+	_mic = Button.new()
+	_mic.custom_minimum_size = Vector2(84, 42)
+	_mic.add_theme_font_size_override("font_size", 18)
+	_mic.pressed.connect(func() -> void: mic_pressed.emit())
+	row.add_child(_mic)
+	set_recording(false)
 	var send := Button.new()
 	send.text = "Send"
 	send.custom_minimum_size = Vector2(84, 42)
@@ -61,6 +70,19 @@ func show_lines(lines: Array) -> void:
 	_redraw()
 
 
+## Whether she is listening: the mic says so (and says what the next press does).
+func set_recording(on: bool) -> void:
+	if _mic == null:
+		return
+	_mic.text = "Stop" if on else "Mic"
+	_mic.tooltip_text = "Listening... press to send what you said" if on else "Press, speak, press again"
+	_mic.modulate = Color(1.0, 0.45, 0.45) if on else Color.WHITE
+	if on:
+		_edit.placeholder_text = "Listening... press the red button when you are done"
+	else:
+		_edit.placeholder_text = "Write to Synth and press Enter"
+
+
 func _redraw() -> void:
 	if _log == null:
 		return
@@ -69,7 +91,11 @@ func _redraw() -> void:
 		_log.append_text("[color=#8a8aa8]Nothing said yet. Write below.[/color]")
 		return
 	for line: Dictionary in _lines:
-		var mine := str(line.get("who", "")) == "you"
+		var who := str(line.get("who", ""))
+		if who == "note":
+			_log.append_text("[color=#8a8aa8][i]%s[/i][/color]\n" % str(line.get("text", "")).replace("[", "[lb]"))
+			continue
+		var mine := who == "you"
 		_log.append_text("[color=%s][b]%s[/b][/color]  %s\n" % [
 			COLOR_YOU if mine else COLOR_SYNTH, "You" if mine else "Synth",
 			str(line.get("text", "")).replace("[", "[lb]")])

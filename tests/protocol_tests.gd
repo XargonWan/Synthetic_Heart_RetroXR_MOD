@@ -46,6 +46,9 @@ func _urls() -> void:
 	_eq(Protocol.socket_url("wss://synth.example:9"), "wss://synth.example:9/api/vessel/retroxr/ws", "wss kept")
 	_eq(Protocol.socket_url(""), "", "empty address")
 	_eq(Protocol.socket_url("http://"), "", "scheme only")
+	var clip := Protocol.audio(7, PackedByteArray([1, 2, 3, 250]), "player")
+	_eq(clip, {"type": "audio", "id": 7, "format": "wav", "data": "AQID+g==", "actor": "player"}, "a voice clip frame")
+	_eq(Marshalls.base64_to_raw(String(clip["data"])), PackedByteArray([1, 2, 3, 250]), "and its bytes come back whole")
 	# A token with characters that would break a query string is escaped.
 	_eq(Protocol.socket_url("h:1", "a b&c=d"), "ws://h:1/api/vessel/retroxr/ws?token=a%20b%26c%3Dd", "token escaped")
 
@@ -146,3 +149,25 @@ func _room() -> void:
 	_check(View.room_changes(mem, [tv_on, player]).is_empty(), "the player is not an object")
 	said = View.room_changes(mem, [tv_on, player])
 	_check(said.is_empty(), "and what is unchanged stays quiet")
+
+	# Turning her head is not the room changing: a thing that left her view but still exists is out of SIGHT, said
+	# nothing about, and when it comes back into view it is not "new" either.
+	var mem2 := {}
+	var tv2 := {"id": "TV1", "name": "TV", "label": "CRT television", "type": "TV", "side": "ahead", "distance": 2.0}
+	var vase := {"id": "Vase1", "name": "Vase", "label": "vase", "type": "Node3D", "side": "ahead", "distance": 1.0}
+	View.room_changes(mem2, [tv2, vase], true, ["TV1", "Vase1"])
+	_check(View.room_changes(mem2, [], false, ["TV1", "Vase1"]).is_empty(), "turned away: nothing is 'no longer there' (it still exists)")
+	_check(mem2.has("TV") and mem2.has("Vase"), "and she remembers them as they were")
+	_check(View.room_changes(mem2, [tv2, vase], false, ["TV1", "Vase1"]).is_empty(), "turned back: they do not 'appear' again")
+	said = View.room_changes(mem2, [tv2], false, ["TV1"])
+	_check(said.size() == 1 and str(said[0]).contains("vase") and str(said[0]).contains("no longer there"), "a thing that stopped existing IS gone (%s)" % str(said))
+	# The old rule still holds when the caller does not say what exists.
+	var mem3 := {}
+	View.room_changes(mem3, [tv2], true)
+	_check(View.room_changes(mem3, []).size() == 1, "without the list of what exists, leaving view is leaving")
+	# Cords are never news, whichever way they go.
+	var cable := {"id": "Cable1", "name": "Cable", "label": "cable", "type": "cable", "side": "to your left", "distance": 1.5}
+	var mem4 := {}
+	_check(View.room_changes(mem4, [tv2], true).is_empty(), "first look")
+	_check(View.room_changes(mem4, [tv2, cable]).is_empty(), "a cable coming into view is not told")
+	_check(View.room_changes(mem4, [tv2]).is_empty() and not mem4.has("Cable"), "nor going, and it is not even remembered")

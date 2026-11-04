@@ -20,11 +20,12 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/synth_routines.gd` what she does on her own once asked: search, explore, watch, fetch; the model is told afterwards
 - `scripts/karada_puppet.gd` her VRM + Mixamo clips retargeted by hand, her gaze, the crossfade between clips, a descriptor's loop window and the upper-body layer (`mask`)
 - `assets/` the Synth logo (no text) for the pod's flanks, and its glow map
+- `scripts/voice_recorder.gd` the player's voice for Synth: joins the `Microphone` service's consumers only while the chat page's mic is on, sends a WAV (`audio` frame), gets the words back (`transcript`)
 - `scripts/rift_summoner.gd` the pickable and the summoning sequence (its own menu: point + left stick / Tab; server and password live there)
 - `scripts/rift_options_panel.gd`, `rift_options_2d.gd`, `rift_settings.gd` that menu and the file behind it
 - `tests/protocol_tests.gd` run with `godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/protocol_tests.gd`
 - `tests/rift_harness.py` + `tests/e2e_probe.gd` the mod against Synth's real rift socket
 
 Built: socket, handshake, her own body from the Karada skin, voice and lip movement, blink and
-face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with her hands, looking for things, carrying them to you, watching the TV (with a picture, which can be switched off in the pod's menu).
+face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with her hands, looking for things, carrying them to you, watching the TV (with a picture, which can be switched off in the pod's menu), speaking to her with the chat page's mic (Synth transcribes it with Auris), and room changes told quietly (what merely leaves her view, and cords, are not news).
 Not built: picking up objects, screens, touch.

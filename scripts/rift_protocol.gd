@@ -3,8 +3,8 @@
 ## Pure: no nodes, no network, so the tests can read it. The same protocol is
 ## documented from Synth's side in plugins/rift_vessel/retroxr/guide.md.
 ##
-##   mod -> synth   hello / event / state / action_result / request_assets
-##   synth -> mod   welcome / action / assets / error
+##   mod -> synth   hello / event / state / action_result / request_assets / audio
+##   synth -> mod   welcome / action / assets / transcript / error
 extends RefCounted
 
 const PROTOCOL := 1
@@ -157,6 +157,12 @@ static func state(position: Vector3, holding: String, extra: Dictionary) -> Dict
 
 static func result(id: int, ok: bool, detail: String = "", data: Dictionary = {}) -> Dictionary:
 	return {"type": "action_result", "id": id, "ok": ok, "detail": detail, "data": data}
+
+
+## A clip of the player's voice (`wav` bytes) for Synth to hear. `id` comes back on the `transcript` frame.
+## The base64 text of a long clip is large: callers cap the length (VoiceRecorder.MAX_SECONDS).
+static func audio(id: int, wav: PackedByteArray, actor: String = "player") -> Dictionary:
+	return {"type": "audio", "id": id, "format": "wav", "data": Marshalls.raw_to_base64(wav), "actor": actor}
 
 
 static func request_assets(animations: Array) -> Dictionary:
