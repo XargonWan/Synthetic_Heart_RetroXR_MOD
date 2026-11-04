@@ -1,7 +1,7 @@
 {
   "id": "xenu.synth_rift",
   "name": "Synthetic Heart Rift",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "author": "Xargon",
   "description": "Synthetic Heart steps into the room through the Rift Summoner: it walks, talks and handles objects, but never plays. Needs a Synthetic Heart server.",
   "api_version": 1,

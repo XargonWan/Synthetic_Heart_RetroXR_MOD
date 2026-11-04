@@ -46,6 +46,11 @@ func _urls() -> void:
 	_eq(Protocol.socket_url("wss://synth.example:9"), "wss://synth.example:9/api/vessel/retroxr/ws", "wss kept")
 	_eq(Protocol.socket_url(""), "", "empty address")
 	_eq(Protocol.socket_url("http://"), "", "scheme only")
+	_eq(Protocol.persona_urls({"skin": "Rei", "persona": {"url": "/skins/Rei/persona.json"}}, "/avatars/model_x.vrm"),
+		["/skins/Rei/persona.json", "/avatars/persona.json"], "the persona the server names first, no repeats")
+	_eq(Protocol.persona_urls({"skin": "Rei"}, "/avatars/model_x.vrm"), ["/avatars/persona.json", "/skins/Rei/persona.json"],
+		"a model in /avatars/ still finds the skin's persona")
+	_eq(Protocol.persona_urls({}, ""), [], "nothing known, nothing to try")
 	var clip := Protocol.audio(7, PackedByteArray([1, 2, 3, 250]), "player")
 	_eq(clip, {"type": "audio", "id": 7, "format": "wav", "data": "AQID+g==", "actor": "player"}, "a voice clip frame")
 	_eq(Marshalls.base64_to_raw(String(clip["data"])), PackedByteArray([1, 2, 3, 250]), "and its bytes come back whole")

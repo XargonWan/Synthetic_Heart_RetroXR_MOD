@@ -40,7 +40,7 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.11.0"
+const MOD_VERSION := "0.11.1"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to her.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -680,11 +680,16 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 		puppet.queue_free()
 		return null
 	# Which expression each logical face name is: her skin's persona, next to the model.
-	var persona_bytes: PackedByteArray = await fetcher.call("get_fresh", model_url.get_base_dir() + "/persona.json")
-	if not bool(still_wanted.call()):
-		puppet.queue_free()
-		return null
-	var persona: Variant = JSON.parse_string(persona_bytes.get_string_from_utf8()) if not persona_bytes.is_empty() else null
+	var persona: Variant = null
+	for persona_url: String in Protocol.persona_urls(assets, model_url):
+		var persona_bytes: PackedByteArray = await fetcher.call("get_fresh", persona_url)
+		if not bool(still_wanted.call()):
+			puppet.queue_free()
+			return null
+		persona = JSON.parse_string(persona_bytes.get_string_from_utf8()) if not persona_bytes.is_empty() else null
+		if persona is Dictionary:
+			print("[Rift] her persona.json: %s" % persona_url)
+			break
 	if persona is Dictionary:
 		puppet.call("set_persona", persona)
 	else:

@@ -73,6 +73,25 @@ static func http_base(server: String) -> String:
 	return ("https://" if secure else "http://") + s if not s.is_empty() else ""
 
 
+## Where her face map (persona.json) may be, best first: the one the server names, then beside the model, then in her
+## skin's folder. A model served from /avatars/ has none beside it (the 404 that left her face on the wrong names).
+static func persona_urls(assets: Dictionary, model_url: String) -> Array:
+	var urls: Array = []
+	var named: Variant = assets.get("persona")
+	if named is Dictionary and not str((named as Dictionary).get("url", "")).is_empty():
+		urls.append(str((named as Dictionary)["url"]))
+	if not model_url.is_empty():
+		urls.append(model_url.get_base_dir() + "/persona.json")
+	var skin := str(assets.get("skin", ""))
+	if not skin.is_empty():
+		urls.append("/skins/%s/persona.json" % skin)
+	var seen: Array = []
+	for u: Variant in urls:
+		if not seen.has(u):
+			seen.append(u)
+	return seen
+
+
 ## A path with each segment percent-encoded and the slashes kept: "/skins/My Skin/a b.fbx".
 static func encode_path(path: String) -> String:
 	var parts := path.split("/")
