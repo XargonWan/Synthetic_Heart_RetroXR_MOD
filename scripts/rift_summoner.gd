@@ -41,7 +41,7 @@ const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.13.0"
+const MOD_VERSION := "0.14.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -60,6 +60,8 @@ const GREET_DISTANCE := 2.0
 const GREET_REARM_SECONDS := 60.0
 ## How far in front of the capsule they step out to.
 const STEP_OUT := 1.3
+## Where eyes are above the floor before there is a body to ask (it is a person of about 1.6 m).
+const EYE_GUESS := 1.5
 ## A touch on the screen sends them back only this long after they arrived: a hand that
 ## is still over the screen from summoning them must not dismiss them.
 const DISMISS_GRACE := 2.5
@@ -108,6 +110,9 @@ var _link_ready := false
 ## "" after a goodbye (the player sent them back), which ends the session for good.
 static var _resume_session := ""
 static var _resume_room := ""
+## `say`s the model made while they were still in the capsule, and the voice clips that came with them.
+var _held_says: Array = []
+var _early_audio: Array = []
 ## This summon picked a session up, and the room it was in before.
 var _resumed := false
 var _resumed_from := ""
@@ -346,6 +351,7 @@ func _begin_summon() -> void:
 	_charge_t = 0.0
 	_link_ready = false
 	_assets_state = ""
+	_drop_held()
 	_free_puppet()
 	_free_fetcher()
 	_fetcher = AssetFetcher.new()
@@ -394,6 +400,9 @@ func _on_opened(welcome: Dictionary) -> void:
 		_link.send_frame({"type": "forget"})
 		RiftSettings.set_forget_pending(false)
 		print("[Rift] the chat was forgotten while the rift was shut: Synth is told now")
+	# The FIRST PROMPT goes now, not when they are out of the pod: the model has the whole charge and the climb out to
+	# think of a greeting, which is held (text and voice) until they step out, instead of the player waiting for it then.
+	_tell_synth_she_was_summoned()
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
@@ -448,6 +457,10 @@ func _arrive() -> void:
 	_body.picture_taker = Callable(self, "_take_picture")
 	_body.routine_done.connect(_on_routine_done)
 	_body.set_fetcher(_fetcher)
+	_body.hold_speech = true   # their voice waits for them to be out of the pod
+	for early: Dictionary in _early_audio:
+		_body.on_karada("audio", early)
+	_early_audio.clear()
 	_body.set_karada_state(_karada_state)
 	_body.set_presence(_presence)
 	if _puppet != null and _assets_state == "ready":
@@ -482,7 +495,8 @@ func _arrive() -> void:
 	_set_phase(Phase.OPEN)
 	_set_status("Open: Synth is in the room. Point at them and press Tab to talk.", true)
 	_screen_text("ONLINE")
-	_tell_synth_she_was_summoned()
+	_link.send_frame({"type": "out"})   # out of the capsule: the introduction is over (the first prompt went at the welcome)
+	_release_speech()
 
 
 ## Synth's Karada: what their avatar is doing, and what they say aloud.
@@ -496,6 +510,9 @@ func _on_karada(kind: String, payload: Dictionary) -> void:
 		return
 	if _body != null and is_instance_valid(_body):
 		_body.on_karada(kind, payload)
+	elif kind == "audio" and _early_audio.size() < 8 and _phase in [Phase.CHARGING, Phase.ARRIVING]:
+		# A greeting made at the welcome: its clip is here before there is a mouth to play it.
+		_early_audio.append(payload)
 
 
 ## The player changed their skin (the WebUI's model picker): fetch the new body and put them in it.
@@ -562,14 +579,16 @@ func _still_arriving() -> bool:
 ## What Synth reads: that they were summoned, and what is in front of them. The state frame
 ## goes first so the world state their turn is built from already has the room in it.
 func _tell_synth_she_was_summoned() -> void:
-	var placed := _placed_entities()
+	# At the welcome there is no body yet: look from where it WILL stand, out of the pod's front, facing out.
+	var out := _floor_below(global_position + global_basis.z * STEP_OUT)
+	var placed := _placed_from(out, global_basis.z, EYE_GUESS, RID())
 	# What they saw on arrival is the baseline: only what changes from here is news.
 	_room_memory.clear()
 	_seen_ids.clear()
 	_room_seen = false
 	SummonerView.room_changes(_room_memory, placed, true)
 	_room_seen = true
-	_link.send_frame(Protocol.state(_body.global_position, "", {"entities": _json_entities(placed)}))
+	_link.send_frame(Protocol.state(out, "", {"entities": _json_entities(placed)}))
 	var text := SummonerView.summoned_text(_room_id(), placed, {"from_room": _resumed_from} if _resumed else {})
 	print("[Rift] telling Synth: %s" % text)
 	_link.send_frame(Protocol.event("summoned", text, "", 1.0,
@@ -623,6 +642,7 @@ func _close(reason: String) -> void:
 	# The player sent them back: a goodbye, so Synth ends the session instead of waiting for it to come back.
 	_resume_session = ""
 	_link.close_rift(reason, true)
+	_drop_held()
 	_remove_body()
 	_free_fetcher()
 	_stop(_hum)
@@ -636,6 +656,7 @@ func _abort(reason: String, with_sound: bool) -> void:
 	print("[Rift] summon ended: %s" % reason)
 	_resume_session = ""
 	_link.close_rift(reason, true)
+	_drop_held()
 	_remove_body()
 	_free_fetcher()
 	_stop(_hum)
@@ -654,6 +675,7 @@ func _on_closed(reason: String) -> void:
 	# Our own close_rift also lands here; by then we are IDLE and have said everything.
 	if _phase == Phase.IDLE:
 		return
+	_drop_held()
 	_remove_body()
 	_free_fetcher()
 	_stop(_hum)
@@ -688,7 +710,32 @@ static func _reason_text(reason: String) -> String:
 
 
 func _on_action(id: int, action: String, payload: Dictionary) -> void:
+	# Still in the capsule: the first prompt was sent at the welcome, so a greeting can arrive long before they are out.
+	# A `say` is held (answered at once) and comes out when they step out; nothing else makes sense yet.
+	if _phase == Phase.CHARGING or _phase == Phase.ARRIVING:
+		if action == "say":
+			_held_says.append(payload)
+			print("[Rift] verb #%d say held until they step out of the capsule: %s" % [id, str(payload.get("text", "")).left(60)])
+			_link.send_frame(Protocol.result(id, true, "held: you are still inside the capsule; your words come out when you step out"))
+			return
+		if Protocol.is_known_verb(action):
+			print("[Rift] verb #%d %s refused: not out of the capsule yet" % [id, action])
+			_link.send_frame(Protocol.result(id, false, "not_out_yet: you are still inside the capsule, only `say` works until you step out"))
+			return
 	await RiftDispatch.handle(_body, _link, id, action, payload)
+
+
+## They are out: what was said while they were in the capsule is said now (the voice is already fetched, if it was ready).
+func _release_speech() -> void:
+	if _body == null or not is_instance_valid(_body):
+		return
+	_body.release_speech()
+	var held := _held_says.size()
+	for payload: Dictionary in _held_says:
+		await _body.act("say", payload)
+	_held_says.clear()
+	if held > 0:
+		print("[Rift] they are out: %d held line(s) said" % held)
 
 
 # ── their real body ────────────────────────────────────────────────────────────
@@ -843,6 +890,12 @@ func _spawn_body() -> bool:
 	return true
 
 
+## Nothing said while in the capsule outlives the summon it was said in.
+func _drop_held() -> void:
+	_held_says.clear()
+	_early_audio.clear()
+
+
 func _remove_body(and_puppet: bool = true) -> void:
 	if _body != null and is_instance_valid(_body):
 		_body.queue_free()
@@ -948,14 +1001,19 @@ func _lookup_entity(query: String) -> Dictionary:
 func _line_of_sight(to: Vector3, node: Node = null) -> bool:
 	if _body == null or not is_instance_valid(_body):
 		return false
-	var from := _body.global_position + Vector3(0.0, _body.eye_height(), 0.0)
+	return _line_of_sight_from(_body.global_position + Vector3(0.0, _body.eye_height(), 0.0), to, node, _body.get_rid())
+
+
+func _line_of_sight_from(from: Vector3, to: Vector3, node: Node, own: RID) -> bool:
 	var query := PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
-	var exclude: Array[RID] = [_body.get_rid()]
+	var exclude: Array[RID] = []
+	if own.is_valid():
+		exclude.append(own)
 	if node is CollisionObject3D:
 		exclude.append((node as CollisionObject3D).get_rid())
 	query.exclude = exclude
-	var hit := _body.get_world_3d().direct_space_state.intersect_ray(query)
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	return hit.is_empty() or (hit["position"] as Vector3).distance_to(to) < 0.35
 
 
@@ -964,16 +1022,22 @@ func _line_of_sight(to: Vector3, node: Node = null) -> bool:
 func _placed_entities() -> Array:
 	if _body == null or not is_instance_valid(_body):
 		return []
+	return _placed_from(_body.global_position, -_body.global_basis.z, _body.eye_height(), _body.get_rid())
+
+
+## What would be in view from `origin` facing `forward` with eyes `eye` above it (the body's own collider left out).
+## The body is not there yet when the first prompt is made, so it is asked from where it WILL stand.
+func _placed_from(origin: Vector3, forward: Vector3, eye: float, own: RID) -> Array:
 	var seen: Array = []
-	var forward := -_body.global_basis.z
 	for e: Dictionary in _entities():
 		var pos: Vector3 = e["position"]
-		if not WorldView.in_view(_body.global_position, forward, pos):
+		if not WorldView.in_view(origin, forward, pos):
 			continue
-		if str(e.get("type", "")) != "player" and not _line_of_sight(pos + Vector3(0, 0.05, 0), e.get("node") as Node):
+		if str(e.get("type", "")) != "player" and not _line_of_sight_from(
+				origin + Vector3(0.0, eye, 0.0), pos + Vector3(0, 0.05, 0), e.get("node") as Node, own):
 			continue
 		seen.append(e)
-	var placed: Array = SummonerView.place(seen, _body.global_position, forward)
+	var placed: Array = SummonerView.place(seen, origin, forward)
 	for e: Dictionary in placed:
 		_seen_ids[str(e.get("id", ""))] = true
 	return placed

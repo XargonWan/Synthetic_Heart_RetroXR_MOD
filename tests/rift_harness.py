@@ -136,6 +136,21 @@ async def _drive():
         }
         for what, ok in checks.items():
             print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} summoned: {what}")
+        # The first prompt arrived while they are still in the capsule: a `say` is HELD (answered at once, said when they
+        # are out) and anything else is refused until then. Control: the same `look` works once they are out (below).
+        said = await conn.act("say", {"text": "Ciao, eccomi."})
+        print(f"[synth] CHECK {'ok  ' if said.ok and 'held' in (said.detail or '') else 'FAIL'} in the capsule: a say is held ({said.detail!r})")
+        looked = await conn.act("look", {"target": "player"})
+        print(f"[synth] CHECK {'ok  ' if (not looked.ok) and 'not_out_yet' in (looked.detail or '') else 'FAIL'} in the capsule: a look is refused ({looked.detail!r})")
+        # The first prompt goes at the welcome now: wait for them to be OUT of the capsule (the mod's `out` frame ends the
+        # presence) before the states are driven, or a think/write is sent to a body that is still a ghost in the pod.
+        from core.animation_handler import get_karada_state_server
+        for _ in range(400):
+            if get_karada_state_server().get_presence() != "summon":
+                break
+            await asyncio.sleep(0.1)
+        else:
+            print("[synth] CHECK FAIL: they never stepped out of the capsule (presence still 'summon')")
         # They are greeting the player: Karada's states wait until they are done (that is the point), so let them finish.
         await asyncio.sleep(7.0)
         # Karada: their avatar thinks, then speaks (a real clip from /media), then is idle again.

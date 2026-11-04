@@ -777,11 +777,25 @@ func set_fetcher(fetcher: Node) -> void:
 
 
 ## Their voice: fetch the clip from the server and play it from their head, in order.
+## A reply now comes as one clip per SENTENCE, each fetched on its own: whichever download ends first must not play
+## first, so each clip takes a ticket and waits its turn to join the queue.
+## Their voice is queued but not played while this is on (they are still in the capsule: the first prompt goes out at the
+## welcome, so a greeting can be ready long before they are out). `release_speech()` lets it play.
+var hold_speech := false
+var _clip_ticket := 0
+var _clip_turn := 0
+
+
 func _hear(payload: Dictionary) -> void:
 	var url := str(payload.get("url", ""))
 	if url.is_empty() or _fetcher == null:
 		return
+	var mine := _clip_ticket
+	_clip_ticket += 1
 	var bytes: PackedByteArray = await _fetcher.call("get_fresh", url)
+	while mine != _clip_turn and is_inside_tree():
+		await get_tree().process_frame
+	_clip_turn += 1
 	if not is_inside_tree():
 		return
 	var stream := AudioBytes.stream_from(bytes)
@@ -790,7 +804,14 @@ func _hear(payload: Dictionary) -> void:
 		return
 	_voice_queue.append(stream)
 	print("[Rift] their voice: %.1f s, \"%s\"" % [AudioBytes.seconds_of(stream), str(payload.get("text", "")).left(60)])
-	if not _voice.playing:
+	if not _voice.playing and not hold_speech:
+		_next_voice()
+
+
+## They are out of the capsule: what is queued is said now.
+func release_speech() -> void:
+	hold_speech = false
+	if _voice != null and not _voice.playing:
 		_next_voice()
 
 
@@ -1025,19 +1046,39 @@ func is_walking() -> bool:
 	return _goal != null
 
 
-## Can they lift it? A loose object (a RigidBody3D) no larger than a person carries in two hands, and not furniture.
-func can_hold(node: Node3D) -> bool:
+## Why they cannot lift it, or "" when they can. A loose object (a RigidBody3D) no larger than a person carries in two hands,
+## and not furniture. The size is what is DRAWN, as one box in the world: the biggest single mesh was measured before, and a
+## hidden or oversized helper mesh (a glow, a pointer plate) could make a Game Boy "not something you can lift".
+func lift_refusal(node: Node3D) -> String:
 	if not (node is RigidBody3D):
-		return false
+		return "it is fixed in place, not a loose object"
 	var script: Script = node.get_script()
 	if script != null and str(script.get_global_name()) in NOT_LIFTED:
-		return false
-	var top := -INF
-	var big := 0.0
+		return "it is furniture, too big to carry"
+	if node.has_method("is_picked_up") and bool(node.call("is_picked_up")):
+		return "the player is holding it"
+	var size := lift_size(node)
+	if size > LIFT_MAX_SIZE:
+		return "it is too big to carry (%.2f m across)" % size
+	return ""
+
+
+## The widest side of everything visible that `node` is made of, as one box in the world (0 when nothing is drawn).
+func lift_size(node: Node3D) -> float:
+	var box := AABB()
+	var first := true
 	for m: Node in node.find_children("*", "GeometryInstance3D", true, false):
-		var box := (m as GeometryInstance3D).get_aabb().size * (m as Node3D).global_transform.basis.get_scale()
-		big = maxf(big, maxf(box.x, maxf(box.y, box.z)))
-	return big <= LIFT_MAX_SIZE and not (node.has_method("is_picked_up") and bool(node.call("is_picked_up")))
+		var g := m as GeometryInstance3D
+		if g == null or not g.is_visible_in_tree():
+			continue
+		var world := g.global_transform * g.get_aabb()
+		box = world if first else box.merge(world)
+		first = false
+	return 0.0 if first else maxf(box.size.x, maxf(box.size.y, box.size.z))
+
+
+func can_hold(node: Node3D) -> bool:
+	return lift_refusal(node) == ""
 
 
 func hold(node: Node3D, label: String) -> bool:

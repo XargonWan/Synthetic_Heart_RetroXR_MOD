@@ -64,15 +64,21 @@ static func place(entities: Array, origin: Vector3, forward: Vector3) -> Array:
 ## `resume` ({from_room}) when the session is one that was picked up again: it is the same conversation, so it says
 ## so (and says where they were), and does not tell them to introduce themselves.
 static func summoned_text(room: String, placed: Array, resume: Dictionary = {}) -> String:
+	# This is the FIRST PROMPT: it goes at the welcome, while they are still in the capsule, so the model has the charge
+	# and the climb out to make a greeting, and `say` is held until they step out.
 	var front: Array = placed.filter(func(e: Dictionary) -> bool: return e["front"])
 	var behind: Array = placed.filter(func(e: Dictionary) -> bool: return not e["front"])
-	var text := "You have just been summoned into the RetroXR room '%s' through the Synthetic Heart Rift Summoner, and you have stepped out of its capsule. " % room
+	var text := "You are being summoned into the RetroXR room '%s' through the Synthetic Heart Rift Summoner. You are inside its capsule and will step out, in front of the player, in a few seconds. " % room
+	var held := "Until you step out only `say` works, and what you say is held: it comes out of your mouth the moment you are out. "
 	if not resume.is_empty():
 		var from_room := str(resume.get("from_room", ""))
 		if from_room != "" and from_room != room:
-			text = "You have come with the player from the RetroXR room '%s' to the room '%s', through the Synthetic Heart Rift Summoner there, and you have stepped out of its capsule. This is the same conversation going on: do not introduce yourself again. " % [from_room, room]
+			text = "You have come with the player from the RetroXR room '%s' to the room '%s', through the Synthetic Heart Rift Summoner there. You are inside its capsule and will step out in a few seconds. This is the same conversation going on: do not introduce yourself again. " % [from_room, room]
 		else:
-			text = "The connection to you was cut for a moment and is back: you are in the RetroXR room '%s' and have stepped out of the Summoner's capsule. This is the same conversation going on: do not introduce yourself again. " % room
+			text = "The connection to you was cut for a moment and is back: you are in the RetroXR room '%s', inside the Summoner's capsule, and will step out in a few seconds. This is the same conversation going on: do not introduce yourself again. " % room
+	else:
+		text += "Say hello to them. "
+	text += held
 	# The player first: they are who called them.
 	var player: Dictionary = {}
 	for e: Dictionary in front:

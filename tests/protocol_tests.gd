@@ -210,18 +210,20 @@ func _room() -> void:
 ## Picking a session up again after a room change: the hello names it, and the text Synth reads says it is the same
 ## conversation (and never has them introduce themselves again).
 func _resume() -> void:
-	var fresh := Protocol.hello("root", [], [], "0.13.0")
+	var fresh := Protocol.hello("root", [], [], "0.14.0")
 	_check(not fresh.has("resume"), "a first hello names no session")
-	_check(not Protocol.hello("root", [], [], "0.13.0", "").has("resume"), "an empty token is no token")
+	_check(not Protocol.hello("root", [], [], "0.14.0", "").has("resume"), "an empty token is no token")
 	_eq(Protocol.hello("bedroom", [], [], "0.13.0", "abc123")["resume"], "abc123", "a hello after a room change names the session")
 	_eq(Protocol.hello("bedroom", [], [], "0.13.0", "abc123")["type"], "hello", "and is still a hello")
 	var placed: Array = [{"id": "TV1", "name": "TV1", "label": "TV", "type": "RetroTV", "side": "straight ahead", "distance": 2.0, "front": true}]
 	var first := View.summoned_text("root", placed)
-	_check(first.contains("just been summoned") and not first.contains("same conversation"), "a new session is told it was summoned")
+	_check(first.contains("being summoned") and first.contains("inside its capsule") and not first.contains("same conversation"), "a new session is told it is being summoned, from inside the capsule")
+	_check(first.contains("Say hello") and first.contains("only `say` works") and first.contains("held"), "the FIRST PROMPT asks for the greeting and says it is held until they are out (%s)" % first)
 	var moved := View.summoned_text("bedroom", placed, {"from_room": "root"})
 	_check(moved.contains("from the RetroXR room 'root' to the room 'bedroom'") and moved.contains("do not introduce yourself again"), "after a room change: where from, where to, no new introduction (%s)" % moved)
 	var blip := View.summoned_text("root", placed, {"from_room": "root"})
-	_check(blip.contains("cut for a moment") and blip.contains("do not introduce yourself again") and not blip.contains("just been summoned"), "the same room: a blip, not a summoning (%s)" % blip)
+	_check(blip.contains("cut for a moment") and blip.contains("do not introduce yourself again") and not blip.contains("being summoned"), "the same room: a blip, not a summoning (%s)" % blip)
+	_check(not moved.contains("Say hello") and not blip.contains("Say hello"), "a conversation that goes on is not asked to say hello")
 	_check(moved.contains("TV") and blip.contains("TV"), "and still says what is in front of them")
 
 

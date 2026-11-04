@@ -163,6 +163,9 @@ static func _hello_frame(room: String, capabilities: Array, animations: Array, m
 		"mod_version": mod_version,
 		"capabilities": capabilities,
 		"animations": animations,
+		# The first prompt (`summoned`) goes at the welcome, not once they are out: the server then waits for an `out` frame
+		# to end the introduction, and the mod holds what is said until then.
+		"early_summon": true,
 	}
 
 

@@ -117,6 +117,10 @@ func _run(kind: String, payload: Dictionary, mine: int) -> void:
 			await _bring(target, mine)
 		"put_down":
 			_put_down(mine)
+	# A routine that ended without saying how is a routine the model waits on for ever: say so.
+	if mine == _token and running == kind:
+		print("[Rift] routine %s ended with no result: reporting it as a failure" % kind)
+		_finish(mine, kind, false, "The %s ended without a result: it did not work out." % kind.replace("_", " "))
 
 
 # ── seeing ───────────────────────────────────────────────────────────────────
@@ -304,23 +308,27 @@ func _watch(query: String, seconds: float, mine: int) -> void:
 	_finish(mine, "watch", true, text, data)
 
 
-## Walk up to a thing and take it. `report`: finish the routine with the result (a part of `bring` does not).
-func _pick_up(query: String, mine: int, report: bool) -> bool:
+## Walk up to a thing and take it. A FAILURE is always reported as the routine `kind`'s result: `bring` used to call this
+## with report=false, so a thing that could not be lifted (or found, or reached) ended it with NO result at all: the model
+## heard nothing, the routine stayed "running" for ever and the model asked for it again, three times in one real session.
+## `report_success`: a pick_up ends with the result; a bring goes on to hand the thing over.
+func _pick_up(query: String, mine: int, report: bool, kind: String = "pick_up", report_success: bool = true) -> bool:
 	if body.holding() != "":
 		if report:
-			_finish(mine, "pick_up", false, "Your hands are full: you are holding %s." % body.holding())
+			_finish(mine, kind, false, "Your hands are full: you are holding %s." % body.holding())
 		return false
-	var hit := await _acquire(query, mine, report, "pick_up")
+	var hit := await _acquire(query, mine, report, kind)
 	if hit.is_empty():
 		return false
 	var node: Node3D = hit.get("node") as Node3D
-	if node == null or not is_instance_valid(node) or not body.can_hold(node):
+	var why: String = "it is gone" if (node == null or not is_instance_valid(node)) else str(body.lift_refusal(node))
+	if why != "":
 		if report:
-			_finish(mine, "pick_up", false, "You cannot pick up %s: it is not something you can lift." % str(hit["name"]))
+			_finish(mine, kind, false, "You cannot pick up %s: %s." % [str(hit["name"]), why])
 		return false
 	if node.has_method("is_picked_up") and bool(node.call("is_picked_up")):
 		if report:
-			_finish(mine, "pick_up", false, "The player is holding %s." % str(hit["name"]))
+			_finish(mine, kind, false, "The player is holding %s." % str(hit["name"]))
 		return false
 	var p: Vector3 = node.global_position
 	var back := Vector3(body.global_position.x - p.x, 0.0, body.global_position.z - p.z)
@@ -333,9 +341,9 @@ func _pick_up(query: String, mine: int, report: bool) -> bool:
 		return false
 	if not body.hold(node, str(hit["name"])):
 		if report:
-			_finish(mine, "pick_up", false, "You could not take %s." % str(hit["name"]))
+			_finish(mine, kind, false, "You could not take %s." % str(hit["name"]))
 		return false
-	if report:
+	if report and report_success:
 		_finish(mine, "pick_up", true, "You are holding %s." % str(hit["name"]), {"holding": hit["name"]})
 	return true
 
@@ -379,8 +387,13 @@ func _hand_over(mine: int, report: bool) -> bool:
 
 
 func _bring(query: String, mine: int) -> void:
-	if body.holding() == "":
-		if not await _pick_up(query, mine, false):
+	var held: String = body.holding()
+	# Already carrying what was asked for: hand it over. Carrying something ELSE: say so, do not give that away instead.
+	if held != "" and WorldView.matches({"name": held, "id": held, "type": ""}, query) == 0:
+		_finish(mine, "bring", false, "Your hands are full: you are holding %s, so you cannot fetch %s. Put it down or hand it over first." % [held, query])
+		return
+	if held == "":
+		if not await _pick_up(query, mine, true, "bring", false):
 			return
 	await _hand_over(mine, false)
 
