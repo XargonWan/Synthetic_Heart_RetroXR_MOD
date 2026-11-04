@@ -1,4 +1,4 @@
-## KaradaPuppet -- Synth's real body: her VRM skin, moved by her Mixamo animations.
+## KaradaPuppet -- Synth's real body: their VRM skin, moved by their Mixamo animations.
 ##
 ## Both come from the Karada skins on the Synth server (`skins/<name>/model.vrm` and
 ## `animations/<state>/*.fbx`). Godot loads both at run time (GLTFDocument and FBXDocument),
@@ -7,11 +7,11 @@
 ## played on it. This retargets by hand, every frame, in MODEL space:
 ##
 ##   delta   = source pose rotation * inverse(source rest rotation)     (how far it turned from rest)
-##   desired = delta * target rest rotation                              (the same turn on her rest)
+##   desired = delta * target rest rotation                              (the same turn on their rest)
 ##   local   = inverse(parent's pose rotation) * desired
 ##
 ## which is right when the two rests face the same way (both are T-poses facing +Z). The hips
-## also carry the height of the source's hips over its rest, scaled to her leg length;
+## also carry the height of the source's hips over its rest, scaled to their leg length;
 ## sideways and forward travel is dropped, the body walks by itself (SynthBody).
 ##
 ## Only a Mixamo/VRoid pair is mapped (`BONES`). Anything else loads as a still model.
@@ -43,7 +43,7 @@ var _player: AnimationPlayer = null
 var _pairs: Array = []
 var _hips: Dictionary = {}
 var _scale := 1.0
-## Half a circle about UP when the animation's rig and hers face opposite ways, else identity.
+## Half a circle about UP when the animation's rig and theirs face opposite ways, else identity.
 var _yaw := Quaternion.IDENTITY
 var _playing := ""
 var _after := ""
@@ -63,7 +63,7 @@ var _over_player: AnimationPlayer = null
 var _over_clip := ""
 var _over_window: Dictionary = {}
 
-## Seconds one clip takes to melt into the next (0 = a cut). The pose she was in is kept and the new one is blended
+## Seconds one clip takes to melt into the next (0 = a cut). The pose they were in is kept and the new one is blended
 ## in from it, bone by bone, so it holds for a change of clip, of window or of layer alike.
 var xfade_seconds := 0.3
 var _last_local: Dictionary = {}
@@ -77,7 +77,7 @@ signal clip_finished(clip_name: String)
 ## What the body cost and how it was brought inside its budget (VrmBudget): tier, triangles, ... and the time.
 var budget: Dictionary = {}
 
-## Her face (blink, emotion, mouth): null until a model is loaded.
+## Their face (blink, emotion, mouth): null until a model is loaded.
 var face: RefCounted = null
 
 
@@ -159,7 +159,7 @@ func _images_text(stats: Dictionary) -> String:
 		float(t.get("bytes_after", 0)) / 1048576.0, (", %d would not compress" % int(t["errors"])) if int(t.get("errors", 0)) > 0 else ""]
 
 
-## Her expressions, from the model file (see VrmFace). Godot hands no scene node back for a skinned mesh
+## Their expressions, from the model file (see VrmFace). Godot hands no scene node back for a skinned mesh
 ## (GLTFState.get_scene_node is null for it), so a glTF node is found again by its NAME under the model.
 func _build_face(state: GLTFState, root: Node3D) -> void:
 	face = VrmFace.new()
@@ -184,15 +184,18 @@ func _build_face(state: GLTFState, root: Node3D) -> void:
 func set_persona(persona: Dictionary) -> void:
 	if face != null and persona.get("blendshape_map") is Dictionary:
 		face.set("blendshape_map", persona["blendshape_map"])
-		print("[Rift] her face map: %d names" % (persona["blendshape_map"] as Dictionary).size())
+		print("[Rift] their face map: %d names" % (persona["blendshape_map"] as Dictionary).size())
+	if face != null and persona.get("emotions") is Dictionary:
+		face.set("emotions", persona["emotions"])
+		print("[Rift] their emotions: %s" % ", ".join(PackedStringArray((persona["emotions"] as Dictionary).keys())))
 
 
-# ── fading her in and out ────────────────────────────────────────────────────
+# ── fading them in and out ────────────────────────────────────────────────────
 #
-# GeometryInstance3D.transparency is a dither, and on this model it is not one fade: a cut-out material (her
-# clothes) is discarded as soon as it is a little see-through while the skin only thins, so at 30% she is
-# NAKED and at 55% nothing is drawn at all. So she fades through her MATERIALS: each one is copied once into
-# an alpha-blended twin (with a depth pre-pass, so her own arm does not show through her own body) and every
+# GeometryInstance3D.transparency is a dither, and on this model it is not one fade: a cut-out material (their
+# clothes) is discarded as soon as it is a little see-through while the skin only thins, so at 30% they are
+# NAKED and at 55% nothing is drawn at all. So they fade through their MATERIALS: each one is copied once into
+# an alpha-blended twin (with a depth pre-pass, so their own arm does not show through their own body) and every
 # twin has the same alpha. At zero the originals are put back, exactly as the file made them.
 
 ## [{mi, surface, original: Material (the override that was there, or null), twin: BaseMaterial3D}]
@@ -222,7 +225,7 @@ func _prepare_fade() -> void:
 				"twin": twins[source], "source": source})
 
 
-## 0 = as the file made her, 1 = gone; one number for every part. The twins are only worn while it is above 0.
+## 0 = as the file made them, 1 = gone; one number for every part. The twins are only worn while it is above 0.
 func set_fade(amount: float) -> void:
 	_prepare_fade()
 	if _fade_slots.is_empty():
@@ -270,7 +273,7 @@ var warmed := false
 
 ## Pay the first draw where nobody looks. A model that is first drawn on the frame it appears compiles its
 ## pipelines and uploads its textures there, and arrives in pieces (the clothes after the skin); so every
-## part is drawn once, off screen, in the two states it will be seen in (see-through and solid), before she is
+## part is drawn once, off screen, in the two states it will be seen in (see-through and solid), before they are
 ## shown. The same trick ModelWarmer plays for the machines. A headless run draws nothing, so there is
 ## nothing to warm (and a SubViewport that updates always hangs one).
 func warm() -> void:
@@ -311,7 +314,7 @@ func warm() -> void:
 	position = Vector3.ZERO
 	viewport.queue_free()
 	warmed = true
-	print("[Rift] her body is warmed: %d parts drawn in %d ms" % [parts.size(), Time.get_ticks_msec() - t0])
+	print("[Rift] their body is warmed: %d parts drawn in %d ms" % [parts.size(), Time.get_ticks_msec() - t0])
 
 
 ## One animation, from the bytes of a Mixamo .fbx, under `clip_name`. The first one loaded
@@ -508,7 +511,7 @@ func _seamless_loop(clip_name: String, start: float, end: float, blend: float) -
 	return key
 
 
-## Keep the pose she is in so the next clip can be blended in from it.
+## Keep the pose they are in so the next clip can be blended in from it.
 func _begin_crossfade() -> void:
 	if xfade_seconds <= 0.0 or _last_local.is_empty():
 		return
@@ -534,8 +537,8 @@ func clip_mask(clip_name: String) -> String:
 	return str(clip_descriptor(clip_name).get("mask", ""))
 
 
-## Play `clip_name` as a layer over the base clip: from the hips up it is the one that moves her; the hips and
-## legs stay with the base. A crossfade in. False when she has no such clip or no rig to put it on.
+## Play `clip_name` as a layer over the base clip: from the hips up it is the one that moves them; the hips and
+## legs stay with the base. A crossfade in. False when they have no such clip or no rig to put it on.
 func play_over(clip_name: String) -> bool:
 	if _player == null or not _clips.has(clip_name) or not _ensure_overlay():
 		return false
@@ -663,11 +666,11 @@ func _repeat_window(player: AnimationPlayer, window: Dictionary) -> void:
 		player.seek(float(window["start"]) + (t - float(window["end"])), true)
 
 
-# ── where she looks ──────────────────────────────────────────────────────────
+# ── where they look ──────────────────────────────────────────────────────────
 #
-# Her head follows a point in the world: the animation moves it, then this turns neck and head the
+# Their head follows a point in the world: the animation moves it, then this turns neck and head the
 # rest of the way, clamped to what a neck can do and eased in and out so it never snaps. It is a
-# reflex layer on top of the clip, like the WebUI avatar's eyes following the pointer: whether she
+# reflex layer on top of the clip, like the WebUI avatar's eyes following the pointer: whether they
 # looks is decided by the body (SynthBody), how is decided here.
 
 const GAZE_YAW_LIMIT := deg_to_rad(70.0)
@@ -682,7 +685,7 @@ var _gaze_target: Variant = null
 var _gaze_weight := 0.0
 
 
-## Look at a world point, or at nothing (null): she eases back to the clip's own head.
+## Look at a world point, or at nothing (null): they ease back to the clip's own head.
 func set_gaze(world_point: Variant) -> void:
 	_gaze_target = world_point
 
@@ -691,7 +694,7 @@ func gaze_weight() -> float:
 	return _gaze_weight
 
 
-## Where her hands are in the world: the middle of the two. Zero vector when she has no hands to ask.
+## Where their hands are in the world: the middle of the two. Zero vector when they have no hands to ask.
 func hand_point() -> Vector3:
 	if skeleton == null:
 		return global_position
@@ -704,7 +707,7 @@ func hand_point() -> Vector3:
 	return (a + b) * 0.5
 
 
-## Where her head points, in the model's space (-Z is her front): the head's turn from its rest
+## Where their head points, in the model's space (-Z is their front): the head's turn from its rest
 ## applied to the front. For the tests, and for the turn below.
 func head_forward() -> Vector3:
 	var head := skeleton.find_bone(_vrm("Head")) if skeleton != null else -1
@@ -736,7 +739,7 @@ func _apply_gaze(delta: float) -> void:
 	if to_target.length() < 0.05:
 		return
 	var dir := to_target.normalized()
-	# Against her front (-Z): yaw about UP, pitch above the horizon, both clamped.
+	# Against their front (-Z): yaw about UP, pitch above the horizon, both clamped.
 	var yaw := clampf(atan2(dir.x, -dir.z), -GAZE_YAW_LIMIT, GAZE_YAW_LIMIT)
 	var pitch := clampf(asin(clampf(dir.y, -1.0, 1.0)), -GAZE_PITCH_DOWN, GAZE_PITCH_UP)
 	var goal := Vector3(sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch))
@@ -801,7 +804,7 @@ func _bind() -> void:
 		var sx := _src_skel.get_bone_global_rest(sl).origin.x
 		if signf(tx) != signf(sx):
 			_yaw = Quaternion(Vector3.UP, PI)
-		print("[Rift] left arm at x=%.3f (her) and %.3f (animation): %s" % [tx, sx, "facing opposite ways, turned" if _yaw != Quaternion.IDENTITY else "facing the same way"])
+		print("[Rift] left arm at x=%.3f (theirs) and %.3f (animation): %s" % [tx, sx, "facing opposite ways, turned" if _yaw != Quaternion.IDENTITY else "facing the same way"])
 	print("[Rift] retarget bound: %d bones, hips scale %.3f" % [_pairs.size(), _scale])
 
 

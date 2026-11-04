@@ -10,10 +10,10 @@
 ##   ARRIVING  when the server has welcomed us AND the charge is done: a flash, the
 ##             body materialises inside the capsule, steps out to its front and turns
 ##             to the player.
-##   OPEN      Synth is told she was summoned and what she sees in front of her, the
+##   OPEN      Synth is told they were summoned and what they see in front of them, the
 ##             player included (a player model does not exist: their head is the
-##             camera). Touching the screen again, or the menu button, sends her back.
-##   LEAVING   she steps back in, dissolves, the rift closes, the screen goes red.
+##             camera). Touching the screen again, or the menu button, sends them back.
+##   LEAVING   they step back in, dissolves, the rift closes, the screen goes red.
 ##
 ## It is handled like an arcade cabinet, because it is as big and as awkward to move:
 ## taken by HOLDING the grab on it for a second (a ring fills; a stray squeeze or click
@@ -40,9 +40,9 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.11.1"
+const MOD_VERSION := "0.12.0"
 const STATE_INTERVAL := 1.0
-## At most this many changes in the room are told per look, and how much they matter to her.
+## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
 const GONE_DELAY_SECONDS := 20.0
 const MAX_SIGHTINGS := 3
@@ -57,10 +57,10 @@ const PICTURE_H := 480
 ## The player this close for the first time is worth telling Synth.
 const GREET_DISTANCE := 2.0
 const GREET_REARM_SECONDS := 60.0
-## How far in front of the capsule she steps out to.
+## How far in front of the capsule they step out to.
 const STEP_OUT := 1.3
-## A touch on the screen sends her back only this long after she arrived: a hand that
-## is still over the screen from summoning her must not dismiss her.
+## A touch on the screen sends them back only this long after they arrived: a hand that
+## is still over the screen from summoning them must not dismiss them.
 const DISMISS_GRACE := 2.5
 
 ## How see-through it is while carried: 0 solid, 1 invisible (the cabinets' number).
@@ -113,14 +113,14 @@ var _ghost_mats: Array = []
 var _ghost_on := false
 var _ghost_settle := 0.0
 var _signal_held := false
-## Her real body, fetched from the server while the pod charges: "" not yet, "loading", "ready", "failed".
+## Their real body, fetched from the server while the pod charges: "" not yet, "loading", "ready", "failed".
 var _assets_state := ""
 var _fetcher: Node = null
 var _karada_state := "idle"
 var _skin_loading := false
-## Karada's presence as last told ("summon" while the vessel introduces her), kept for a body that is not there yet.
+## Karada's presence as last told ("summon" while the vessel introduces them), kept for a body that is not there yet.
 var _presence := ""
-## The ids of what she has SEEN since she stepped out: what she can name (see _lookup_entity).
+## The ids of what they have SEEN since they stepped out: what they can name (see _lookup_entity).
 var _seen_ids: Dictionary = {}
 var _room_memory: Dictionary = {}
 var _room_seen := false
@@ -304,7 +304,7 @@ func toggle() -> void:
 	set_on(_phase == Phase.IDLE)
 
 
-## True from the touch until she has left again.
+## True from the touch until they have left again.
 func is_on() -> bool:
 	return _phase != Phase.IDLE
 
@@ -362,7 +362,7 @@ func _on_rise_finished() -> void:
 		_play(_hum, "hum")
 
 
-## A big file (her model) is on its way: say how far, on the menu and on the pod's screen.
+## A big file (their model) is on its way: say how far, on the menu and on the pod's screen.
 func _on_download_progress(url_path: String, got: int, total: int) -> void:
 	if total < 1_000_000 or _phase != Phase.CHARGING:
 		return
@@ -434,8 +434,8 @@ func _arrive() -> void:
 		_body.attach_puppet(_puppet)
 		_puppet = null
 	elif _assets_state == "failed":
-		print("[Rift] her own body could not be loaded: she arrives as a capsule")
-	# Intangible and half there until she is actually out of the pod.
+		print("[Rift] their own body could not be loaded: they arrive as a capsule")
+	# Intangible and half there until they are actually out of the pod.
 	_body.set_ethereal(true)
 	_body.hide_until_summoned()
 	await _body.appear(0.7)
@@ -446,7 +446,7 @@ func _arrive() -> void:
 	await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
 	if not _still_arriving():
 		return
-	# Out of the pod: only now does she become solid.
+	# Out of the pod: only now does they become solid.
 	_flash()
 	await _body.materialise(0.5)
 	if not _still_arriving():
@@ -459,12 +459,12 @@ func _arrive() -> void:
 	_pulse = 0.0
 	_beam.scale = Vector3.ONE
 	_set_phase(Phase.OPEN)
-	_set_status("Open: Synth is in the room. Point at her and press Tab to talk.", true)
+	_set_status("Open: Synth is in the room. Point at them and press Tab to talk.", true)
 	_screen_text("ONLINE")
 	_tell_synth_she_was_summoned()
 
 
-## Synth's Karada: what her avatar is doing, and what she says aloud.
+## Synth's Karada: what their avatar is doing, and what they say aloud.
 func _on_karada(kind: String, payload: Dictionary) -> void:
 	if kind == "animation":
 		_karada_state = str(payload.get("state", "idle"))
@@ -477,17 +477,17 @@ func _on_karada(kind: String, payload: Dictionary) -> void:
 		_body.on_karada(kind, payload)
 
 
-## The player changed her skin (the WebUI's model picker): fetch the new body and put her in it.
-## The server's description of the body is asked for again, so her clips come from the new skin too.
+## The player changed their skin (the WebUI's model picker): fetch the new body and put them in it.
+## The server's description of the body is asked for again, so their clips come from the new skin too.
 func _change_skin(payload: Dictionary) -> void:
 	if _phase != Phase.OPEN or _body == null or not is_instance_valid(_body) or _fetcher == null:
-		print("[Rift] the skin changed (%s) while she is not out: it is fetched at the next summon" % str(payload.get("name", "")))
+		print("[Rift] the skin changed (%s) while they are not out: it is fetched at the next summon" % str(payload.get("name", "")))
 		return
 	if _skin_loading:
 		_skin_again = payload
 		return
 	_skin_loading = true
-	print("[Rift] her skin changed to %s: fetching it" % str(payload.get("name", payload.get("url", ""))))
+	print("[Rift] their skin changed to %s: fetching it" % str(payload.get("name", payload.get("url", ""))))
 	_link.send_frame(Protocol.request_assets(Protocol.WANTED_ANIMATIONS))
 	var assets: Dictionary = await _link.assets_received
 	var fetcher := _fetcher
@@ -496,7 +496,7 @@ func _change_skin(payload: Dictionary) -> void:
 	_skin_loading = false
 	if puppet != null and _phase == Phase.OPEN and _body != null and is_instance_valid(_body):
 		_body.swap_puppet(puppet)
-		print("[Rift] she wears her new skin")
+		print("[Rift] they wear their new skin")
 	elif puppet != null:
 		puppet.queue_free()
 	if not _skin_again.is_empty():
@@ -505,7 +505,7 @@ func _change_skin(payload: Dictionary) -> void:
 		_change_skin(next)
 
 
-## The player wrote to her through the chat page.
+## The player wrote to them through the chat page.
 func _on_player_wrote(text: String) -> void:
 	if _link == null or not _link.is_open():
 		return
@@ -517,8 +517,8 @@ func _on_player_wrote(text: String) -> void:
 var _clip_ids := 0
 
 
-## The player spoke to her (the mic of the chat page): the clip goes to Synth, who hears it with her own ears
-## (Auris) and answers with the words; they then reach her as a chat line, exactly like typed ones.
+## The player spoke to them (the mic of the chat page): the clip goes to Synth, who hears it with their own ears
+## (Auris) and answers with the words; they then reach them as a chat line, exactly like typed ones.
 func _on_player_spoke(wav: PackedByteArray) -> void:
 	if _link == null or not _link.is_open():
 		_body.heard(false, "", "stt_failed")
@@ -538,11 +538,11 @@ func _still_arriving() -> bool:
 	return _phase == Phase.ARRIVING and _body != null and is_instance_valid(_body) and _link.is_open()
 
 
-## What Synth reads: that she was summoned, and what is in front of her. The state frame
-## goes first so the world state her turn is built from already has the room in it.
+## What Synth reads: that they were summoned, and what is in front of them. The state frame
+## goes first so the world state their turn is built from already has the room in it.
 func _tell_synth_she_was_summoned() -> void:
 	var placed := _placed_entities()
-	# What she saw on arrival is the baseline: only what changes from here is news.
+	# What they saw on arrival is the baseline: only what changes from here is news.
 	_room_memory.clear()
 	_seen_ids.clear()
 	_room_seen = false
@@ -555,7 +555,7 @@ func _tell_synth_she_was_summoned() -> void:
 		{"room": _room_id(), "seen": _json_entities(placed)}))
 
 
-## Send her back: she steps into the capsule and dissolves, the rift closes.
+## Send them back: they step into the capsule and dissolve, the rift closes.
 func _dismiss() -> void:
 	if _phase == Phase.LEAVING:
 		return
@@ -643,10 +643,10 @@ func _on_action(id: int, action: String, payload: Dictionary) -> void:
 	await RiftDispatch.handle(_body, _link, id, action, payload)
 
 
-# ── her real body ────────────────────────────────────────────────────────────
+# ── their real body ────────────────────────────────────────────────────────────
 
-## Fetch her skin from the server (the model, then every animation the server named) while the
-## pod charges, and build the puppet. The capsule stays her body if any of it fails.
+## Fetch their skin from the server (the model, then every animation the server named) while the
+## pod charges, and build the puppet. The capsule stays their body if any of it fails.
 func _load_body(assets: Dictionary) -> void:
 	_assets_state = "loading"
 	_set_status("Rift open: loading Synth's body ...", false)
@@ -658,17 +658,17 @@ func _load_body(assets: Dictionary) -> void:
 		return
 	_puppet = puppet
 	_assets_state = "ready"
-	print("[Rift] her body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str((assets.get("animations", {}) as Dictionary).keys())])
+	print("[Rift] their body is ready: %d bones mapped, clips: %s" % [int(puppet.call("mapped_bones")), str((assets.get("animations", {}) as Dictionary).keys())])
 	_set_status("Rift open: charging ...", false)
 
 
-## Her body from what the server described (`assets`): the model, her persona's face map and every
+## Their body from what the server described (`assets`): the model, their persona's face map and every
 ## clip it named. null when it could not be built or `still_wanted` said to stop.
 func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) -> Node3D:
 	var model: Dictionary = assets.get("model", {}) if assets.get("model") is Dictionary else {}
 	var model_url := str(model.get("url", ""))
 	if model_url.is_empty() or fetcher == null:
-		print("[Rift] the server named no model for her: capsule")
+		print("[Rift] the server named no model for them: capsule")
 		return null
 	var vrm: PackedByteArray = await fetcher.call("get_bytes", model_url)
 	if not bool(still_wanted.call()):
@@ -679,7 +679,7 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 	if vrm.is_empty() or not bool(puppet.call("load_model", vrm)):
 		puppet.queue_free()
 		return null
-	# Which expression each logical face name is: her skin's persona, next to the model.
+	# Which expression each logical face name is: their skin's persona, next to the model.
 	var persona: Variant = null
 	for persona_url: String in Protocol.persona_urls(assets, model_url):
 		var persona_bytes: PackedByteArray = await fetcher.call("get_fresh", persona_url)
@@ -688,12 +688,12 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 			return null
 		persona = JSON.parse_string(persona_bytes.get_string_from_utf8()) if not persona_bytes.is_empty() else null
 		if persona is Dictionary:
-			print("[Rift] her persona.json: %s" % persona_url)
+			print("[Rift] their persona.json: %s" % persona_url)
 			break
 	if persona is Dictionary:
 		puppet.call("set_persona", persona)
 	else:
-		print("[Rift] her persona.json did not come: her face takes names as they are")
+		print("[Rift] their persona.json did not come: their face takes names as they are")
 	var anims: Dictionary = assets.get("animations", {}) if assets.get("animations") is Dictionary else {}
 	for clip_name: String in anims:
 		var entry: Variant = anims[clip_name]
@@ -716,7 +716,7 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 		if loops.is_empty() and posts.is_empty():
 			continue
 		if loops.size() > 1 and clip_name == "idle":
-			# A skin can ship a standing clip that stands badly (Rei's Idle arches her back): of the
+			# A skin can ship a standing clip that stands badly (Rei's Idle arches them back): of the
 			# standing ones keep the most upright. Not for the others: how upright a gesture or a
 			# typing pose is says nothing about it.
 			await puppet.call("choose_most_upright", clip_name, loops)
@@ -726,7 +726,7 @@ func _build_puppet(assets: Dictionary, fetcher: Node, still_wanted: Callable) ->
 				puppet.call("alias_clip", clip_name + "_post", posts[0])
 		else:
 			puppet.call("alias_clip", clip_name, posts[0])
-	# Drawn once, off screen, before anybody is shown her: it is what keeps her from arriving in pieces.
+	# Drawn once, off screen, before anybody is shown them: it is what keeps them from arriving in pieces.
 	await puppet.call("warm")
 	if not bool(still_wanted.call()):
 		puppet.queue_free()
@@ -760,7 +760,7 @@ func _own_clips(state: String, clips: Array) -> Array:
 func _loading_still_wanted(fetcher: Node, puppet: Node = null) -> bool:
 	if _phase == Phase.CHARGING or _phase == Phase.ARRIVING:
 		return true
-	print("[Rift] summon ended while her body was loading: dropped")
+	print("[Rift] summon ended while their body was loading: dropped")
 	if puppet != null and is_instance_valid(puppet):
 		puppet.queue_free()
 	_assets_state = ""
@@ -770,14 +770,14 @@ func _loading_still_wanted(fetcher: Node, puppet: Node = null) -> bool:
 # ── the body ─────────────────────────────────────────────────────────────────
 
 func _spawn_body() -> bool:
-	# Not her loaded body: that is what this is about to be put on.
+	# Not their loaded body: that is what this is about to be put on.
 	_remove_body(false)
 	var host: Node = get_parent()
 	if host == null:
 		print("[Rift] summoner has no parent to put the body in")
 		return false
 	# The floor is measured BEFORE the body exists: a body added at the origin first is
-	# a collider the ray stops on (it found her head and stood her at 1.55 m).
+	# a collider the ray stops on (it found their head and stood them at 1.55 m).
 	var floor_spot := _floor_below(global_position)
 	_body = SynthBody.new()
 	_body.name = "SynthBody"
@@ -825,7 +825,7 @@ func _floor_below(point: Vector3) -> Vector3:
 	return (hit["position"] as Vector3) if hit.has("position") else point
 
 
-# ── what she sees ────────────────────────────────────────────────────────────
+# ── what they see ────────────────────────────────────────────────────────────
 
 ## Everything in the room, in world space: the spawned objects and the player (no model: their head is the camera).
 ## Each has a `name` a person could say (WorldView: "Game Boy Color", "VHS tape 2", "unknown item" -- never the node's
@@ -870,12 +870,12 @@ func _entities() -> Array:
 	return found
 
 
-## The thing the player or Synth means by `query`, among what she has SEEN (so a name she was never told does not
-## work: she has to look for it), nearest of the best matches; {} when none. Exact names win over parts of one.
+## The thing the player or Synth means by `query`, among what they have SEEN (so a name they were never told does not
+## work: they have to look for it), nearest of the best matches; {} when none. Exact names win over parts of one.
 func _lookup_entity(query: String) -> Dictionary:
 	if query.strip_edges().is_empty() or _body == null or not is_instance_valid(_body):
 		return {}
-	_placed_entities()  # what is in front of her right now counts as seen, even before the next state frame
+	_placed_entities()  # what is in front of their right now counts as seen, even before the next state frame
 	var best: Dictionary = {}
 	var best_score := 0
 	var best_d := INF
@@ -893,7 +893,7 @@ func _lookup_entity(query: String) -> Dictionary:
 	return best
 
 
-## Can she SEE this point from her eyes? Nothing solid between (the pointer boxes of the laser do not count, and
+## Can they SEE this point from their eyes? Nothing solid between (the pointer boxes of the laser do not count, and
 ## neither does the thing itself or what it rests on within 35 cm of it).
 func _line_of_sight(to: Vector3, node: Node = null) -> bool:
 	if _body == null or not is_instance_valid(_body):
@@ -909,8 +909,8 @@ func _line_of_sight(to: Vector3, node: Node = null) -> bool:
 	return hit.is_empty() or (hit["position"] as Vector3).distance_to(to) < 0.35
 
 
-## `_entities()` as she sees them: in front of her (about 180 degrees), within reach of her eyes, not hidden;
-## bearing, distance and side, nearest first. What she sees is remembered by id (`_seen_ids`): it is what she can name.
+## `_entities()` as they see them: in front of them (about 180 degrees), within reach of their eyes, not hidden;
+## bearing, distance and side, nearest first. What they see is remembered by id (`_seen_ids`): it is what they can name.
 func _placed_entities() -> Array:
 	if _body == null or not is_instance_valid(_body):
 		return []
@@ -946,18 +946,21 @@ func _state_frame() -> Dictionary:
 	return Protocol.state(_body.global_position, _body.holding(), {"entities": _json_entities(_placed_entities())})
 
 
-## What she did on her own is over: Synth is told how it went, as a turn of its own (a search that found the thing,
-## or that looked everywhere and did not). A picture her eyes took rides in `data`.
+## What they did on their own is over: Synth is told how it went, as a turn of its own (a search that found the thing,
+## or that looked everywhere and did not). A picture their eyes took rides in `data`.
 func _on_routine_done(kind: String, ok: bool, summary: String, data: Dictionary) -> void:
 	if _link == null:
 		return
 	data["ok"] = ok
-	_link.send_frame(Protocol.event("%s_done" % kind, summary, "", ROUTINE_SALIENCE, data))
+	# This is a RESULT, not a message: without saying so each one made the model answer the player's last line again
+	# ("I'll go and look around" after it had looked around) and start the same routine a second time.
+	var told := "%s [This is only the result of what you set off. The player's last message was already answered: tell them how it went in a sentence or two, and do not start it again unless they ask.]" % summary
+	_link.send_frame(Protocol.event("%s_done" % kind, told, "", ROUTINE_SALIENCE, data))
 	_link.send_frame(_state_frame())
 
 
-## She notices what changes around her: a thing put down or taken away, a machine switched on or off. Told as
-## quiet sightings (they are what she may get curious about, never a reason to interrupt anyone).
+## They notice what changes around them: a thing put down or taken away, a machine switched on or off. Told as
+## quiet sightings (they are what they may get curious about, never a reason to interrupt anyone).
 func _watch_room() -> void:
 	var first := _room_memory.is_empty() and not _room_seen
 	_room_seen = true
@@ -1047,7 +1050,7 @@ func _screen_text(text: String) -> void:
 	_screen_label.text = text
 
 
-## The burst when she arrives or leaves: the lamp is thrown bright and settles.
+## The burst when they arrive or leave: the lamp is thrown bright and settles.
 func _flash() -> void:
 	_light_mat.emission_energy_multiplier = 8.0
 	var tw := create_tween()
@@ -1064,9 +1067,9 @@ func _stop(player: AudioStreamPlayer3D) -> void:
 		player.stop()
 
 
-## A picture from her eyes toward `point`: a JPEG, base64, small. Done in a viewport of its own that shares the room's
-## world, with a camera at her eyes (nothing is added to what the player sees; the camera sits just ahead of her face,
-## so her own head is behind it). Not in a headless run (no renderer to draw it) and not with the pod's "pictures"
+## A picture from their eyes toward `point`: a JPEG, base64, small. Done in a viewport of its own that shares the room's
+## world, with a camera at their eyes (nothing is added to what the player sees; the camera sits just ahead of their face,
+## so their own head is behind it). Not in a headless run (no renderer to draw it) and not with the pod's "pictures"
 ## switch off (the picture leaves the room for the server, so it is the player's to forbid).
 func _take_picture(point: Vector3) -> Dictionary:
 	if not RiftSettings.pictures_on():

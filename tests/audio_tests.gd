@@ -1,4 +1,4 @@
-## Her voice, from bytes to a stream: the WAV a Vox engine writes, and what is not playable.
+## Their voice, from bytes to a stream: the WAV a Vox engine writes, and what is not playable.
 ##
 ##   godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/audio_tests.gd
 extends SceneTree

@@ -155,14 +155,14 @@ func _room() -> void:
 	said = View.room_changes(mem, [tv_on, player])
 	_check(said.is_empty(), "and what is unchanged stays quiet")
 
-	# Turning her head is not the room changing: a thing that left her view but still exists is out of SIGHT, said
+	# Turning their head is not the room changing: a thing that left their view but still exists is out of SIGHT, said
 	# nothing about, and when it comes back into view it is not "new" either.
 	var mem2 := {}
 	var tv2 := {"id": "TV1", "name": "TV", "label": "CRT television", "type": "TV", "side": "ahead", "distance": 2.0}
 	var vase := {"id": "Vase1", "name": "Vase", "label": "vase", "type": "Node3D", "side": "ahead", "distance": 1.0}
 	View.room_changes(mem2, [tv2, vase], true, ["TV1", "Vase1"])
 	_check(View.room_changes(mem2, [], false, ["TV1", "Vase1"]).is_empty(), "turned away: nothing is 'no longer there' (it still exists)")
-	_check(mem2.has("TV") and mem2.has("Vase"), "and she remembers them as they were")
+	_check(mem2.has("TV") and mem2.has("Vase"), "and they remember them as they were")
 	_check(View.room_changes(mem2, [tv2, vase], false, ["TV1", "Vase1"]).is_empty(), "turned back: they do not 'appear' again")
 	said = View.room_changes(mem2, [tv2], false, ["TV1"])
 	_check(said.size() == 1 and str(said[0]).contains("vase") and str(said[0]).contains("no longer there"), "a thing that stopped existing IS gone (%s)" % str(said))

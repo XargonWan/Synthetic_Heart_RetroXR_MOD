@@ -14,6 +14,7 @@ const ChatPanel := preload("res://mods/xenu.synth_rift/scripts/chat_panel.gd")
 const SummonerView := preload("res://mods/xenu.synth_rift/scripts/summoner_view.gd")
 const SynthRoutines := preload("res://mods/xenu.synth_rift/scripts/synth_routines.gd")
 const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
+const SynthNav := preload("res://mods/xenu.synth_rift/scripts/synth_nav.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 const VoiceRecorder := preload("res://mods/xenu.synth_rift/scripts/voice_recorder.gd")
 
@@ -39,48 +40,48 @@ var _puppet: Node3D = null
 var _anim_state := ""
 ## The clip playing as a layer over the base one ("" for none): a game played with the hands, whatever the legs do.
 var _overlay_state := ""
-## The one-off clip she is playing (a greeting, an emote); while it plays Karada's states wait.
+## The one-off clip they are playing (a greeting, an emote); while it plays Karada's states wait.
 var _one_shot := ""
-## What Synth's Karada says she is doing (idle, think, write, talk, touch): her body follows it,
-## except while she walks, and again when she stops.
+## What Synth's Karada says they are doing (idle, think, write, talk, touch): their body follows it,
+## except while they walk, and again when they stop.
 var _karada_state := "idle"
-## Karada's presence: "summon" while a vessel is introducing her into this room (a rift opening), "" otherwise.
+## Karada's presence: "summon" while a vessel is introducing them into this room (a rift opening), "" otherwise.
 var _presence := ""
 var _fetcher: Node = null
 var _voice: AudioStreamPlayer3D = null
 var _voice_queue: Array = []
 var _voice_heard := 0
-## Her voice has a bus of its own, with a capture on it: how loud she is right now opens her mouth.
+## Their voice has a bus of its own, with a capture on it: how loud they are right now opens their mouth.
 const VOICE_BUS := "SynthVoice"
 var _capture: AudioEffectCapture = null
 ## Set by the Summoner: (query: String) -> Dictionary of the nearest thing in the room called that
 ## ({name, label, type, systemid, powered, position}), or {}. "player" is handled here.
 var world_lookup: Callable = Callable()
-## What she sees in front of her right now (the summoner knows the room): an Array of placed entities.
+## What they see in front of their right now (the summoner knows the room): an Array of placed entities.
 var sight: Callable = Callable()
-## A picture from her eyes at a point, when pictures are on: a coroutine, {ok, jpeg_b64} (see take_picture).
+## A picture from their eyes at a point, when pictures are on: a coroutine, {ok, jpeg_b64} (see take_picture).
 var picture_taker: Callable = Callable()
-## What she does on her own once asked (look for, fetch, watch the TV): the model is told the result afterwards.
+## What they do on their own once asked (look for, fetch, watch the TV): the model is told the result afterwards.
 var routines: Node = null
-## Her head going now and then to something that is really there (a probe that measures her gaze switches it off).
+## Their head going now and then to something that is really there (a probe that measures their gaze switches it off).
 var idle_curiosity_on := true
 signal routine_done(kind: String, ok: bool, summary: String, data: Dictionary)
-## Where she is looking: at the player ("player"), at a point she chose ("point"), or nowhere.
-## A glance is short: the player moving or clicking earns ONE (GLANCE_SECONDS), and then she
-## ignores them for GLANCE_COOLDOWN, or she would stare like a security camera. She looks at them
-## for as long as she speaks, and when she arrives; at a thing for as long as she studies it.
+## Where they are looking: at the player ("player"), at a point they chose ("point"), or nowhere.
+## A glance is short: the player moving or clicking earns ONE (GLANCE_SECONDS), and then they
+## ignores them for GLANCE_COOLDOWN, or they would stare like a security camera. They look at the player
+## for as long as they speak, and when they arrive; at a thing for as long as they study it.
 const GLANCE_SECONDS := 2.2
 const GLANCE_COOLDOWN := 10.0
 const ARRIVAL_LOOK_SECONDS := 6.0
 const STUDY_SECONDS := 5.0
-## How many verbs she has been given (the probes wait for the server to finish asking).
+## How many verbs they have been given (the probes wait for the server to finish asking).
 var acts_seen := 0
 var _look_kind := ""
 var _look_point := Vector3.ZERO
 var _look_left := 0.0
 var _glance_cool := 0.0
 var _noticed := false
-## While she has just chosen where to look, the reflex leaves it alone until then (ticks, ms).
+## While they have just chosen where to look, the reflex leaves it alone until then (ticks, ms).
 var _deliberate_until := 0
 var _gaze_clock := 0.0
 var _gaze_cam_pos := Vector3.ZERO
@@ -94,18 +95,27 @@ const FOLLOW_DISTANCE := 1.4
 const STOP_SHORT := 0.9
 var _bubble_left := 0.0
 var _goal: Variant = null  # Vector3 while walking
+## The way round things to `_goal` (SynthNav): points to steer through, the last being the goal itself when a way
+## was found; `_path_complete` false means it stops short, and arriving at its end is a walk that failed.
+var _path := PackedVector3Array()
+var _path_i := 0
+var _path_complete := true
+var _replans := 0
+var _avoid: Array[Vector3] = []
+const WAYPOINT_REACHED := 0.25
+const MAX_REPLANS := 2
 var _stuck_for := 0.0
 var _stuck_sample := 0.0
 var _last_pos := Vector3.ZERO
 var _walk_elapsed := 0.0
 var _walk_result: Dictionary = {}
 signal _walk_finished
-## Something was said, by the player or by her: the chat page redraws.
+## Something was said, by the player or by them: the chat page redraws.
 signal chat_changed
-## The player wrote this to her: the Summoner sends it to Synth.
+## The player wrote this to them: the Summoner sends it to Synth.
 signal chat_sent(text: String)
 
-## The mic was pressed or let go: the chat page shows whether she is listening.
+## The mic was pressed or let go: the chat page shows whether they are listening.
 signal voice_changed(recording: bool)
 ## The player's voice, recorded and ended (a WAV): the Summoner sends it to Synth.
 signal voice_clip(wav: PackedByteArray)
@@ -159,7 +169,7 @@ func _ready() -> void:
 	add_child(_bubble)
 	_last_pos = global_position
 
-	# Point at her and press Tab (the left thumbstick) to write to her: this is what the ray finds.
+	# Point at them and press Tab (the left thumbstick) to write to them: this is what the ray finds.
 	var pointer := StaticBody3D.new()
 	pointer.name = "PointerArea"
 	pointer.collision_layer = 1 << 20
@@ -173,7 +183,7 @@ func _ready() -> void:
 	pointer.add_child(pshape)
 	add_child(pointer)
 
-	# Her voice comes from her head.
+	# Their voice comes from their head.
 	_voice = AudioStreamPlayer3D.new()
 	_voice.name = "Voice"
 	_voice.unit_size = 3.0
@@ -225,7 +235,16 @@ func _physics_process(delta: float) -> void:
 	if _walk_elapsed > MOVE_TIMEOUT:
 		_end_walk(false, "timeout")
 		return
-	var dir := to_goal.normalized()
+	# Steer through the path's points, not straight at the goal (a wall or a console in between).
+	var aim := to_goal
+	if not _path.is_empty():
+		while _path_i < _path.size() - 1 and _flat_to(_path[_path_i]).length() < WAYPOINT_REACHED:
+			_path_i += 1
+		aim = _flat_to(_path[_path_i])
+		if _path_i == _path.size() - 1 and aim.length() < WAYPOINT_REACHED and not _path_complete:
+			_end_walk(false, "no_way_round: got as near as %.1f m to it" % to_goal.length())
+			return
+	var dir := aim.normalized()
 	velocity.x = dir.x * WALK_SPEED
 	velocity.z = dir.z * WALK_SPEED
 	rotation.y = lerp_angle(rotation.y, atan2(-dir.x, -dir.z), minf(1.0, 8.0 * delta))
@@ -241,16 +260,24 @@ func _physics_process(delta: float) -> void:
 		_last_pos = global_position
 		_stuck_sample = 0.0
 	if _stuck_for > STUCK_SECONDS:
+		# Something the plan did not know of (it was put there, or is the player): once or twice, another way.
+		if _replans < MAX_REPLANS:
+			_replans += 1
+			_avoid.append(global_position + dir * 0.45)
+			_stuck_for = 0.0
+			print("[Rift] walk: stuck at %s, looking for another way (try %d)" % [str(global_position), _replans])
+			if _plan_path(goal) and not _path.is_empty():
+				return
 		_end_walk(false, "blocked")
 
 
 func _input(event: InputEvent) -> void:
-	# A click is the player doing something: she may notice (the WebUI avatar's eyes do the same).
+	# A click is the player doing something: they may notice (the WebUI avatar's eyes do the same).
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 		_noticed = true
 
 
-## Look at the player for `seconds` (never shortens a look she is already in).
+## Look at the player for `seconds` (never shortens a look they are already in).
 func attend_player(seconds: float) -> void:
 	if _look_kind == "point" and _look_left > 0.0:
 		return
@@ -258,17 +285,17 @@ func attend_player(seconds: float) -> void:
 	_look_left = maxf(_look_left, seconds)
 
 
-## Look at a point in the world she chose, for `seconds`.
+## Look at a point in the world they chose, for `seconds`.
 func study_point(point: Vector3, seconds: float = STUDY_SECONDS) -> void:
 	_look_kind = "point"
 	_look_point = point
 	_look_left = seconds
 
 
-## The reflex: when the player moves or clicks and she is doing nothing else, she glances at them for a
-## moment, then relaxes, and does not look again for a while however much they move. Never while she
-## walks (she looks where she goes), never right after she chose where to look; and she looks at them
-## for as long as she is speaking.
+## The reflex: when the player moves or clicks and they are doing nothing else, they glance at the player for a
+## moment, then relaxes, and does not look again for a while however much they move. Never while they
+## walks (they look where they go), never right after they chose where to look; and they look at the player
+## for as long as they are speaking.
 func _update_gaze(delta: float) -> void:
 	if _puppet == null:
 		return
@@ -291,7 +318,7 @@ func _update_gaze(delta: float) -> void:
 		if not busy and _look_left <= 0.0 and _glance_cool <= 0.0:
 			attend_player(GLANCE_SECONDS)
 			_glance_cool = GLANCE_COOLDOWN
-	# Speaking to someone, she looks at them.
+	# Speaking to someone, they look at the player.
 	if (_voice != null and _voice.playing) or _bubble_left > 0.0:
 		attend_player(0.5)
 	_look_left = maxf(_look_left - delta, 0.0)
@@ -308,12 +335,12 @@ func is_gazing() -> bool:
 	return _puppet != null and float(_puppet.call("gaze_weight")) > 0.5
 
 
-## What she is looking at right now: "player", "point" or "" (the tests read it).
+## What they are looking at right now: "player", "point" or "" (the tests read it).
 func gaze_kind() -> String:
 	return _look_kind if _look_left > 0.0 and is_gazing() else ""
 
 
-## While she was asked to follow: keep to FOLLOW_DISTANCE of the player (inside her leash).
+## While they were asked to follow: keep to FOLLOW_DISTANCE of the player (inside their leash).
 func _follow_the_player(delta: float) -> void:
 	if not _follow:
 		return
@@ -333,15 +360,60 @@ func _follow_the_player(delta: float) -> void:
 	if from_anchor.length() > LEASH:
 		var edge := anchor + from_anchor.normalized() * LEASH
 		dest = Vector3(edge.x, global_position.y, edge.z)
+	_begin_walk(dest)
+
+
+## Start walking to `dest`: the goal, and the way round things to it. False when there is no way at all.
+func _begin_walk(dest: Vector3) -> bool:
 	_goal = dest
+	collision_mask = _body_mask()
 	_walk_elapsed = 0.0
 	_stuck_for = 0.0
 	_stuck_sample = 0.0
 	_last_pos = global_position
+	_replans = 0
+	_avoid.clear()
+	return _plan_path(dest)
+
+
+## Work out the way to `dest` from here. With no way found at all the walk goes straight (as it always did) and the
+## stuck check ends it; a partial way is walked to its end and then reported as a failed walk.
+func _plan_path(dest: Vector3) -> bool:
+	var nav := SynthNav.new()
+	nav.space = get_world_3d().direct_space_state
+	nav.mask = _body_mask()
+	nav.exclude = [get_rid()]
+	nav.floor_y = global_position.y
+	nav.anchor = anchor
+	nav.leash = LEASH
+	nav.avoid = _avoid
+	var t0 := Time.get_ticks_usec()
+	var res := nav.plan(global_position, dest)
+	_path = res["path"]
+	_path_i = 0
+	_path_complete = bool(res["complete"])
+	print("[Rift] walk: %s to %s, %d point(s), %d physics queries, %.1f ms%s" % [
+		"a way" if _path_complete else "NO full way", str(dest), _path.size(), int(res["queries"]),
+		float(Time.get_ticks_usec() - t0) / 1000.0, " (search capped)" if bool(res.get("capped", false)) else ""])
+	return _path_complete
+
+
+func _flat_to(p: Vector3) -> Vector3:
+	return Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
+
+
+## What their body collides with: only the world while they are still a ghost in the pod (the pod is a pickable and
+## would hold them in), the world and every loose thing after. They are BLOCKED by them: with the mask on the world alone
+## they walked through a console and its collider shot it across the room.
+func _body_mask() -> int:
+	return 1 if _ethereal else SynthNav.MASK
 
 
 func _end_walk(ok: bool, detail: String) -> void:
 	_goal = null
+	_path = PackedVector3Array()
+	_path_i = 0
+	_path_complete = true
 	_anim_state = ""
 	_refresh_anim()
 	_stuck_for = 0.0
@@ -352,7 +424,7 @@ func _end_walk(ok: bool, detail: String) -> void:
 	_walk_finished.emit()
 
 
-## She comes into view. Her own body (loaded and warmed beforehand, see KaradaPuppet.warm) fades in as ONE
+## They come into view. Their own body (loaded and warmed beforehand, see KaradaPuppet.warm) fades in as ONE
 ## thing, every part at the same value, with nothing growing and nothing arriving after the rest; the
 ## capsule that stands in for a body without a skin grows out of a point on the floor, fast then slow.
 ## The collider is not scaled (physics bodies do not like it), only the picture.
@@ -375,7 +447,7 @@ func appear(seconds: float) -> void:
 	await tw.finished
 
 
-## The reverse: her body fades out as one thing; the capsule shrinks into the floor.
+## The reverse: their body fades out as one thing; the capsule shrinks into the floor.
 func disappear(seconds: float) -> void:
 	if _puppet != null:
 		var fade := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
@@ -392,8 +464,8 @@ func disappear(seconds: float) -> void:
 
 
 ## Intangible and half there: no collision (the pod, a rigid body, is pushed by a body that overlaps
-## it, which is how a first summon sent the capsule sliding away) and see-through. She is
-## like this from the moment she arrives until she is actually outside, and again on her way back in.
+## it, which is how a first summon sent the capsule sliding away) and see-through. They are
+## like this from the moment they arrive until they are actually outside, and again on their way back in.
 const ETHEREAL_FADE := 0.55
 var _ethereal := false
 
@@ -401,6 +473,7 @@ var _ethereal := false
 func set_ethereal(on: bool) -> void:
 	_ethereal = on
 	collision_layer = 0 if on else 1
+	collision_mask = _body_mask()
 	_set_fade(ETHEREAL_FADE if on else 0.0)
 	_refresh_anim()
 
@@ -409,20 +482,21 @@ func is_ethereal() -> bool:
 	return _ethereal
 
 
-## She becomes solid and opaque, over `seconds`: the moment she is really in the room.
+## They become solid and opaque, over `seconds`: the moment they are really in the room.
 func materialise(seconds: float) -> void:
 	_ethereal = false
-	# She has just stepped out and there is someone in front of her: she looks at them.
+	# They have just stepped out and there is someone in front of them: they look at the player.
 	attend_player(ARRIVAL_LOOK_SECONDS)
 	var tw := create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_method(_set_fade, ETHEREAL_FADE, 0.0, seconds)
 	await tw.finished
 	collision_layer = 1
+	collision_mask = _body_mask()
 	_refresh_anim()
 
 
-## How see-through she is: 0 solid, 1 gone (dithered per instance; a renderer that ignores it, the
-## Quest's, shows her solid, which is no worse than before).
+## How see-through they are: 0 solid, 1 gone (dithered per instance; a renderer that ignores it, the
+## Quest's, shows their solid, which is no worse than before).
 func _set_fade(amount: float) -> void:
 	if _puppet != null:
 		_puppet.call("set_fade", amount)
@@ -441,13 +515,13 @@ func _visual_parts() -> Array:
 	return parts
 
 
-## Hidden until she is called out of the capsule.
+## Hidden until they are called out of the capsule.
 func hide_until_summoned() -> void:
 	_visual.visible = false
 
 
-## Her real body (a KaradaPuppet, loaded from her skin) in place of the capsule. It stands on the
-## floor, faces -Z like this body does, and the speech bubble moves up to her head.
+## Their real body (a KaradaPuppet, loaded from their skin) in place of the capsule. It stands on the
+## floor, faces -Z like this body does, and the speech bubble moves up to their head.
 func attach_puppet(puppet: Node3D) -> void:
 	if puppet.get_parent() != null:
 		puppet.reparent(self, false)
@@ -460,6 +534,7 @@ func attach_puppet(puppet: Node3D) -> void:
 	if puppet.has_signal("clip_finished") and not puppet.is_connected("clip_finished", _on_clip_finished):
 		puppet.connect("clip_finished", _on_clip_finished)
 	_capsule.visible = false
+	_replay_face()
 	_bubble.position.y = float(puppet.get("height")) + 0.25
 	_one_shot = ""
 	_anim_state = ""
@@ -469,7 +544,7 @@ func attach_puppet(puppet: Node3D) -> void:
 	print("[Rift] Synth's own body is on (%.2f m)" % float(puppet.get("height")))
 
 
-## Another skin: the new body takes her place where she stands, in what she was doing.
+## Another skin: the new body takes their place where they stand, in what they were doing.
 func swap_puppet(puppet: Node3D) -> void:
 	var old := _puppet
 	_puppet = null
@@ -486,7 +561,7 @@ func swap_puppet(puppet: Node3D) -> void:
 	attach_puppet(puppet)
 
 
-## Where her eyes are above the floor.
+## Where their eyes are above the floor.
 func eye_height() -> float:
 	return float(_puppet.get("height")) * 0.93 if _puppet != null else 1.45
 
@@ -495,12 +570,12 @@ func has_puppet() -> bool:
 	return _puppet != null
 
 
-## Her avatar's own states, as Karada tells them (the server owns "what she is doing"): the clip of that
-## name if her skin has it, else standing. A state that is not one of her clips changes nothing.
+## Their avatar's own states, as Karada tells them (the server owns "what they are doing"): the clip of that
+## name if their skin has it, else standing. A state that is not one of their clips changes nothing.
 func set_karada_state(state: String) -> void:
 	var before := _karada_state
 	_karada_state = state if not state.is_empty() else "idle"
-	# Out of a crouch she stands up (the skin's own clip for it), then does what the state says.
+	# Out of a crouch they stand up (the skin's own clip for it), then do what the state says.
 	if before == "crouch" and _karada_state != "crouch" and _one_shot == "" and _goal == null and _puppet != null \
 			and bool(_puppet.call("has_clip", "crouch_post")):
 		play_once("crouch_post")
@@ -512,7 +587,7 @@ func karada_state() -> String:
 	return _karada_state
 
 
-## Karada's presence (`summon` while she is being introduced), as the server says it.
+## Karada's presence (`summon` while they are being introduced), as the server says it.
 func set_presence(presence: String) -> void:
 	_presence = "" if presence in ["", "idle"] else presence
 	_refresh_anim()
@@ -522,16 +597,16 @@ func presence() -> String:
 	return _presence
 
 
-## Karada's states are what her avatar is doing in her HEAD (think, write, touch): on the WebUI that is all she does,
-## so they are always shown. Here she also has a body that does things, and a person can walk and think at once:
-## she shows a state's clip only when she is not busy, and the activity wins otherwise (the state is remembered, so
-## she goes back to it when the activity ends). `summon` is the state of being introduced into a rift: it is not a
-## pose of its own (a skin may ship `animations/summon/`), it is the vessel saying "she is arriving".
+## Karada's states are what their avatar is doing in their HEAD (think, write, touch): on the WebUI that is all they do,
+## so they are always shown. Here they also have a body that does things, and a person can walk and think at once:
+## they show a state's clip only when they are not busy, and the activity wins otherwise (the state is remembered, so
+## they go back to it when the activity ends). `summon` is the state of being introduced into a rift: it is not a
+## pose of its own (a skin may ship `animations/summon/`), it is the vessel saying "they are arriving".
 func is_busy() -> bool:
 	return _goal != null or _one_shot != "" or _ethereal or _presence == "summon"
 
 
-## The clip she rests in. Standing while busy; the state's clip (if her skin has it) when she is not.
+## The clip they rest in. Standing while busy; the state's clip (if their skin has it) when they are not.
 func _rest_anim() -> String:
 	if _puppet == null:
 		return "idle"
@@ -542,19 +617,19 @@ func _rest_anim() -> String:
 	return _karada_state if bool(_puppet.call("has_clip", _karada_state)) else "idle"
 
 
-## The clip that moves her whole body: the rest clip, unless that one only moves the upper body (a layer, below).
+## The clip that moves their whole body: the rest clip, unless that one only moves the upper body (a layer, below).
 func _base_anim() -> String:
 	var rest := _rest_anim()
 	return "idle" if _is_layer(rest) else rest
 
 
-## A state whose clip is a layer over the body (`mask: upper_body`) is not what she stands or sits in: it is what
-## her hands do. It goes on while she walks, and on whatever she is doing with her legs. It does not go on
-## while she greets, arrives or leaves: those are the whole body's.
+## A state whose clip is a layer over the body (`mask: upper_body`) is not what they stand or sit in: it is what
+## their hands do. It goes on while they walk, and on whatever they are doing with their legs. It does not go on
+## while they greet, arrive or leave: those are the whole body's.
 func _wanted_layer() -> String:
 	if _puppet != null and _held != null and _one_shot == "" and not _ethereal and _presence != "summon" \
 			and bool(_puppet.call("has_clip", "gaming")):
-		return "gaming"  # her hands together in front of her: she holds something in both
+		return "gaming"  # their hands together in front of them: they hold something in both
 	if _puppet == null or _one_shot != "" or _ethereal or _presence == "summon" or _karada_state == "idle":
 		return ""
 	if not bool(_puppet.call("has_clip", _karada_state)) or not _is_layer(_karada_state):
@@ -567,7 +642,7 @@ func _is_layer(clip_name: String) -> bool:
 		and str(_puppet.call("clip_mask", clip_name)) == "upper_body"
 
 
-## Put the clips back to what she should be doing now, unless a walk or a one-shot has her legs.
+## Put the clips back to what they should be doing now, unless a walk or a one-shot has their legs.
 func _refresh_anim() -> void:
 	if _puppet == null:
 		return
@@ -582,40 +657,58 @@ func on_karada(kind: String, payload: Dictionary) -> void:
 	match kind:
 		"animation":
 			set_karada_state(str(payload.get("state", "idle")))
-			# The clip's own expressions (think shuts her eyes from a frame on).
+			# The clip's own expressions (think shuts their eyes from a frame on).
 			var descriptor: Variant = payload.get("descriptor", {})
-			_face_call("set_descriptor", descriptor if descriptor is Dictionary else {})
+			_face_state["descriptor"] = descriptor if descriptor is Dictionary else {}
+			_face_call("set_descriptor", _face_state["descriptor"])
 		"audio":
 			_hear(payload)
 		"presence":
 			set_presence(str(payload.get("state", "")))
 		"face":
-			if not (payload.get("values", {}) as Dictionary).is_empty():
-				print("[Rift] Karada face: %s" % str(payload.get("values", {})))
-			_face_call("set_face_values", payload.get("values", {}) if payload.get("values") is Dictionary else {})
+			var values: Dictionary = payload.get("values", {}) if payload.get("values") is Dictionary else {}
+			# The server repeats the same state every second or so: say it when it CHANGES, not 350 times a session.
+			if values != _face_state["values"]:
+				print("[Rift] Karada face: %s%s" % [str(values), "" if _puppet != null else " (no body yet: kept for it)"])
+			_face_state["values"] = values
+			_face_call("set_face_values", values)
 		"expression":
-			if str(payload.get("type", "")) != "vrm_expression_clear":
-				print("[Rift] Karada expression: %s" % str(payload))
 			if str(payload.get("type", "")) == "vrm_expression_clear":
-				_face_call("set_overlay", null)
+				_face_state["overlay"] = null
 			else:
-				_face_call("set_overlay", payload.get("targets", null))
+				print("[Rift] Karada expression: %s" % str(payload))
+				_face_state["overlay"] = payload.get("targets", null)
+			_face_call("set_overlay", _face_state["overlay"])
 		_:
 			pass  # the model is the Summoner's: it fetches the new body
 
 
-## Call something on her face, if she has one.
+## What Karada last said about their face. A frame that comes while they have no body (the pod is still charging, or a
+## new skin is being built) used to be dropped, and the face stayed neutral until the server's NEXT change, which for
+## an emotion is minutes away. It is kept and handed to every body they get.
+var _face_state := {"values": {}, "overlay": null, "descriptor": {}}
+
+
+func _replay_face() -> void:
+	_face_call("set_face_values", _face_state["values"])
+	_face_call("set_overlay", _face_state["overlay"])
+	if not (_face_state["descriptor"] as Dictionary).is_empty():
+		_face_call("set_descriptor", _face_state["descriptor"])
+	print("[Rift] their face: what Karada last said is on them (%d emotion values)" % (_face_state["values"] as Dictionary).size())
+
+
+## Call something on their face, if they have one.
 func _face_call(method: String, arg: Variant) -> void:
 	if _puppet != null and _puppet.get("face") != null:
 		(_puppet.get("face") as RefCounted).call(method, arg)
 
 
-## The persona's blendshape map and the rest of her face come with the model: hand them over.
+## The persona's blendshape map and the rest of their face come with the model: hand them over.
 func face_of() -> RefCounted:
 	return _puppet.get("face") if _puppet != null else null
 
 
-## The bus her voice plays on, with a capture to measure it by; made once, kept for the session.
+## The bus their voice plays on, with a capture to measure it by; made once, kept for the session.
 func _voice_capture() -> AudioEffectCapture:
 	var bus := AudioServer.get_bus_index(VOICE_BUS)
 	if bus < 0:
@@ -632,14 +725,14 @@ func _voice_capture() -> AudioEffectCapture:
 	return capture
 
 
-## Her mouth follows how loud she is: the RMS of what her voice just played, as the WebUI measures it. Where the
-## voice bus gives no signal (a device whose audio path bypasses it: nothing is measured while she is plainly
+## Their mouth follows how loud they are: the RMS of what their voice just played, as the WebUI measures it. Where the
+## voice bus gives no signal (a device whose audio path bypasses it: nothing is measured while they are plainly
 ## speaking) the mouth moves by a speech-like pattern instead, which is better than a face that does not speak.
 const SILENT_CAPTURE_SECONDS := 0.25
 var _silent_for := 0.0
 var _speech_clock := 0.0
 var _fallback_logged := false
-## For the tests: she is speaking though no clip plays.
+## For the tests: they are speaking though no clip plays.
 var _force_speaking := false
 
 
@@ -665,7 +758,7 @@ func _lip_sync() -> void:
 	if speaking and _silent_for > SILENT_CAPTURE_SECONDS:
 		if not _fallback_logged:
 			_fallback_logged = true
-			print("[Rift] lip sync: the voice bus measured nothing while she speaks: her mouth moves by a speech-like pattern")
+			print("[Rift] lip sync: the voice bus measured nothing while they speak: their mouth moves by a speech-like pattern")
 		_speech_clock += delta
 		level = speech_pattern(_speech_clock)
 	face.call("speak_level", level if speaking else 0.0)
@@ -680,7 +773,7 @@ func set_fetcher(fetcher: Node) -> void:
 	_fetcher = fetcher
 
 
-## Her voice: fetch the clip from the server and play it from her head, in order.
+## Their voice: fetch the clip from the server and play it from their head, in order.
 func _hear(payload: Dictionary) -> void:
 	var url := str(payload.get("url", ""))
 	if url.is_empty() or _fetcher == null:
@@ -690,10 +783,10 @@ func _hear(payload: Dictionary) -> void:
 		return
 	var stream := AudioBytes.stream_from(bytes)
 	if stream == null:
-		print("[Rift] her voice could not be played (%d bytes from %s)" % [bytes.size(), url])
+		print("[Rift] their voice could not be played (%d bytes from %s)" % [bytes.size(), url])
 		return
 	_voice_queue.append(stream)
-	print("[Rift] her voice: %.1f s, \"%s\"" % [AudioBytes.seconds_of(stream), str(payload.get("text", "")).left(60)])
+	print("[Rift] their voice: %.1f s, \"%s\"" % [AudioBytes.seconds_of(stream), str(payload.get("text", "")).left(60)])
 	if not _voice.playing:
 		_next_voice()
 
@@ -710,13 +803,13 @@ func is_speaking() -> bool:
 	return _voice != null and _voice.playing
 
 
-## How many clips of her voice have played (the probes count them).
+## How many clips of their voice have played (the probes count them).
 func voices_played() -> int:
 	return _voice_heard
 
 
-## What she is doing, as an animation: standing, walking. Names her skin has not got fall back
-## to standing (her body then slides, which is still better than a stiff pose).
+## What they are doing, as an animation: standing, walking. Names their skin has not got fall back
+## to standing (their body then slides, which is still better than a stiff pose).
 func _set_anim(state: String) -> void:
 	if _puppet == null or state == _anim_state:
 		return
@@ -727,7 +820,7 @@ func _set_anim(state: String) -> void:
 		_puppet.call("play", "idle", true)
 
 
-## The layer clip over her body: `clip_name` from the hips up, or none with "".
+## The layer clip over their body: `clip_name` from the hips up, or none with "".
 func _set_layer(clip_name: String) -> void:
 	if _puppet == null or clip_name == _overlay_state:
 		return
@@ -742,8 +835,8 @@ func layer() -> String:
 	return _overlay_state
 
 
-## A one-off animation from her skin, then standing again (or the state she is in, when she is not busy any more).
-## False when her skin has not got it.
+## A one-off animation from their skin, then standing again (or the state they are in, when they are not busy any more).
+## False when their skin has not got it.
 func play_once(clip_name: String) -> bool:
 	if _puppet == null or not bool(_puppet.call("has_clip", clip_name)):
 		return false
@@ -763,7 +856,7 @@ func _on_clip_finished(clip_name: String) -> void:
 		_refresh_anim()
 
 
-## The menu she has, like every object: point at her and press Tab, and write.
+## The menu they have, like every object: point at them and press Tab, and write.
 func toggle_options_ui(camera: Node3D) -> void:
 	ChatPanel.toggle_for(self, camera)
 
@@ -772,7 +865,7 @@ func chat_lines() -> Array:
 	return _chat
 
 
-## The player wrote to her (the page's Send): kept in the log and handed on.
+## The player wrote to them (the page's Send): kept in the log and handed on.
 func send_chat(text: String) -> void:
 	var t := text.strip_edges()
 	if t.is_empty():
@@ -804,7 +897,7 @@ func toggle_voice() -> void:
 		_log_chat("note", "There is no microphone to listen with.")
 
 
-## What Synth made of the clip: her ears' answer. The words go into the log as the player's own; a failure is a note.
+## What Synth made of the clip: their ears' answer. The words go into the log as the player's own; a failure is a note.
 func heard(ok: bool, text: String, reason: String) -> void:
 	if ok and not text.is_empty():
 		_log_chat("you", text)
@@ -836,10 +929,10 @@ func say_bubble(text: String) -> void:
 func act(action: String, payload: Dictionary) -> Dictionary:
 	acts_seen += 1
 	if action in ["look", "look_at", "inspect", "emote", "move"]:
-		# She chose where to look or what to do: the reflex stays out of it for a while.
+		# They chose where to look or what to do: the reflex stays out of it for a while.
 		_deliberate_until = Time.get_ticks_msec() + DELIBERATE_MS
 		_look_left = 0.0
-	# What she was doing for the model ends when the model says something else to do with her legs.
+	# What they were doing for the model ends when the model says something else to do with their legs.
 	if action in ["move", "follow"] and routines != null and routines.is_busy():
 		routines.cancel("you were told to %s" % action)
 	match action:
@@ -884,11 +977,11 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 			return {"ok": false, "detail": "not_implemented_yet: " + action}
 
 
-# ── what she holds ───────────────────────────────────────────────────────────
+# ── what they hold ───────────────────────────────────────────────────────────
 #
-# A thing she picks up is carried by moving it (never by changing who owns it in the room): the object is frozen and
-# eased to her hands every frame, and put back as it was when she lets go. While she carries, `release_mode` is
-# UNFROZEN, so that a player who takes it from her hands is not left holding something that will stay frozen in
+# A thing they pick up is carried by moving it (never by changing who owns it in the room): the object is frozen and
+# eased to their hands every frame, and put back as it was when they let go. While they carry, `release_mode` is
+# UNFROZEN, so that a player who takes it from their hands is not left holding something that will stay frozen in
 # the air when they let go (the pickable would otherwise remember "frozen" as what to go back to).
 
 const NOT_LIFTED := ["RetroTV", "Seat", "Table", "SpeakerPair"]
@@ -903,7 +996,7 @@ func holding() -> String:
 	return _held_name if _held != null and is_instance_valid(_held) else ""
 
 
-## True while she still has it: false once the player took it from her hands.
+## True while they still have it: false once the player took it from their hands.
 func is_holding_still() -> bool:
 	return _held != null and is_instance_valid(_held)
 
@@ -912,7 +1005,7 @@ func is_walking() -> bool:
 	return _goal != null
 
 
-## Can she lift it? A loose object (a RigidBody3D) no larger than a person carries in two hands, and not furniture.
+## Can they lift it? A loose object (a RigidBody3D) no larger than a person carries in two hands, and not furniture.
 func can_hold(node: Node3D) -> bool:
 	if not (node is RigidBody3D):
 		return false
@@ -940,12 +1033,12 @@ func hold(node: Node3D, label: String) -> bool:
 	rb.collision_mask = 0
 	_held = rb
 	_held_name = label
-	print("[Rift] she picks up %s" % label)
+	print("[Rift] they pick up %s" % label)
 	_refresh_anim()
 	return true
 
 
-## Where her hands are, in the world: the middle of the two, or in front of her chest when she has no body to ask.
+## Where their hands are, in the world: the middle of the two, or in front of their chest when they have no body to ask.
 func hand_point() -> Vector3:
 	if _puppet != null and _puppet.has_method("hand_point"):
 		return _puppet.call("hand_point") as Vector3
@@ -962,7 +1055,7 @@ func _carry(delta: float) -> void:
 		return
 	if _held.has_method("is_picked_up") and bool(_held.call("is_picked_up")):
 		# The player has it. Its own bookkeeping is theirs now; only give back what we changed that they do not.
-		print("[Rift] the player took %s from her hands" % _held_name)
+		print("[Rift] the player took %s from their hands" % _held_name)
 		if _held_saved.has("release_mode") and "release_mode" in _held:
 			_held.set("release_mode", _held_saved["release_mode"])
 		_held = null
@@ -973,7 +1066,7 @@ func _carry(delta: float) -> void:
 	_held.global_position = _held.global_position.lerp(want, minf(1.0, 12.0 * delta))
 
 
-## Let go of it, on the surface under her hands in front of her (a table, the floor), as it was before she took it.
+## Let go of it, on the surface under their hands in front of them (a table, the floor), as it was before they took it.
 func put_down() -> void:
 	if _held == null:
 		return
@@ -994,7 +1087,7 @@ func put_down() -> void:
 		rb.linear_velocity = Vector3.ZERO
 		rb.angular_velocity = Vector3.ZERO
 		rb.sleeping = false
-	print("[Rift] she puts down %s" % _held_name)
+	print("[Rift] they put down %s" % _held_name)
 	_held = null
 	_held_name = ""
 	_refresh_anim()
@@ -1005,7 +1098,7 @@ func walk_to(point: Vector3) -> Dictionary:
 	return await _move({"x": point.x, "y": point.y, "z": point.z})
 
 
-## A picture from her eyes toward `point` (see the summoner's `_take_picture`): {ok, jpeg_b64}; {ok: false} when
+## A picture from their eyes toward `point` (see the summoner's `_take_picture`): {ok, jpeg_b64}; {ok: false} when
 ## pictures are not wired (no window, a headless run) or switched off.
 func take_picture(point: Vector3) -> Dictionary:
 	if not picture_taker.is_valid():
@@ -1034,7 +1127,7 @@ func _face_point(p: Vector3) -> void:
 		rotation.y = atan2(-flat.x, -flat.z)
 
 
-## Her head goes to what she is studying; the player looks at themselves.
+## Their head goes to what they are studying; the player looks at themselves.
 func _study(hit: Dictionary) -> void:
 	if str(hit.get("type", "")) == "player":
 		attend_player(STUDY_SECONDS)
@@ -1125,10 +1218,10 @@ func _move(payload: Dictionary) -> Dictionary:
 		return {"ok": false, "detail": "too_far_from_the_summoner (limit %.0f m)" % LEASH}
 	if _goal != null:
 		_end_walk(false, "replaced")
-	_goal = dest
-	_walk_elapsed = 0.0
-	_stuck_for = 0.0
-	_stuck_sample = 0.0
-	_last_pos = global_position
+	_begin_walk(dest)
+	if _path.is_empty() and not _path_complete:
+		# Nothing to walk along: boxed in. Say so rather than push at the wall for two seconds.
+		_end_walk(false, "no_way_round: nothing leads from here toward it")
+		return _walk_result
 	await _walk_finished
 	return _walk_result

@@ -26,7 +26,7 @@ static func server_of(s: Dictionary) -> String:
 	return server if not server.is_empty() else DEFAULT_SERVER
 
 
-## May she send pictures of what she sees to Synth (a watched TV, a room)? On unless the player switched it off: a
+## May they send pictures of what they see to Synth (a watched TV, a room)? On unless the player switched it off: a
 ## picture leaves the room for the server, and from there perhaps for a model, so it is theirs to forbid.
 static func pictures_on() -> bool:
 	var env := OS.get_environment("XENU_SYNTH_PICTURES")

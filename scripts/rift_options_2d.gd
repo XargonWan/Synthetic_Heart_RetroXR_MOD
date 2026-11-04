@@ -71,14 +71,14 @@ func _build_ui() -> void:
 		power_pressed.emit())
 	root.add_child(_power)
 
-	# What she sees can go to Synth as a picture (watching the TV, looking around): the player's to allow.
+	# What they see can go to Synth as a picture (watching the TV, looking around): the player's to allow.
 	var pictures := CheckButton.new()
-	pictures.text = "Let her send pictures of what she sees"
+	pictures.text = "Let their send pictures of what they see"
 	pictures.button_pressed = RiftSettings.pictures_on()
 	pictures.toggled.connect(func(on: bool) -> void: RiftSettings.set_pictures(on))
 	root.add_child(pictures)
 
-	# Her body is made once per skin and kept (see BodyCache); this lets the player throw it away, e.g. to free the space.
+	# Their body is made once per skin and kept (see BodyCache); this lets the player throw it away, e.g. to free the space.
 	var cache_btn := Button.new()
 	cache_btn.text = "Forget Synth's saved body"
 	cache_btn.custom_minimum_size = Vector2(0, 34)

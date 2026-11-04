@@ -9,7 +9,7 @@
 ##      hook on the image parse, so the full-size copy is never uploaded), then given mipmaps and compressed (ETC2 on
 ##      a Quest, S3TC on a desktop). Compressing inside that hook does not hold (the importer's materials get an
 ##      uncompressed copy), so it is done on the textures the materials end up with.
-##   2. MORPH TARGETS: a face carries 57 blend shapes on each of its surfaces and her expressions move about 14;
+##   2. MORPH TARGETS: a face carries 57 blend shapes on each of its surfaces and their expressions move about 14;
 ##      the others are dropped (each one is a full vertex buffer, and the GPU blends them every frame).
 ##   3. TRIANGLES: over the tier's cap the mesh is brought down through Godot's own simplifier (ImporterMesh
 ##      LODs), finest level that fits; and a LOD chain is kept so the far body is cheaper still.

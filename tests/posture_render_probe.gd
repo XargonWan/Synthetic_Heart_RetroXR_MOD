@@ -64,7 +64,7 @@ func _ready() -> void:
 			puppet.set_clip_descriptor(pair[0], JSON.parse_string(d))
 	puppet.xfade_seconds = 0.0
 	var h: float = puppet.height
-	# From her front-left, a little above her middle.
+	# From their front-left, a little above their middle.
 	_cam.position = Vector3(-1.5, h * 0.62, -2.9)
 	_cam.look_at(Vector3(0, h * 0.5, 0))
 

@@ -1,4 +1,4 @@
-## Photographs the real body: her VRM, then her Mixamo idle and greeting, retargeted.
+## Photographs the real body: their VRM, then their Mixamo idle and greeting, retargeted.
 ## WINDOWED (never --headless): the dummy renderer returns a correctly sized blank picture.
 ##
 ##   SKIN=$HOME/gits/Synthetic_Heart/skins/Rei OUT=/some/folder godot --path RetroXR \
@@ -49,7 +49,7 @@ func _ready() -> void:
 	_check(puppet.load_model(FileAccess.get_file_as_bytes(skin + "/model.vrm")), "the model loads")
 	print("[probe] model in %d ms" % (Time.get_ticks_msec() - t0))
 	var side := OS.get_environment("VIEW") == "side"
-	# She faces -Z; "side" looks at her from her left (+X... her right is -X), full length.
+	# They face -Z; "side" looks at them from their left (+X... their right is -X), full length.
 	_cam.position = Vector3(3.2, puppet.height * 0.5, 0) if side else Vector3(0, puppet.height * 0.55, -3.2)
 	_cam.look_at(Vector3(0, puppet.height * 0.5, 0))
 	await _shoot(out, "1_vrm_rest_pose")

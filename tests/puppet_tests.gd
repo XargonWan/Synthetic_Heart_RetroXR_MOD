@@ -1,6 +1,6 @@
-## The retarget, in numbers: where her hands, feet and head end up against where the animation
+## The retarget, in numbers: where their hands, feet and head end up against where the animation
 ## puts its own, relative to the hips. A Mixamo rig faces +Z and a VRoid one -Z, so the answer
-## is the animation's offset turned half a circle (x and z flipped) and scaled to her legs.
+## is the animation's offset turned half a circle (x and z flipped) and scaled to their legs.
 ##
 ##   SKIN=$HOME/gits/Synthetic_Heart/skins/Rei godot --headless --path RetroXR \
 ##       --script res://mods/xenu.synth_rift/tests/puppet_tests.gd
@@ -9,7 +9,7 @@
 extends SceneTree
 
 const Puppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
-## Her proportions are not Mixamo's: arms and legs differ by a few centimetres.
+## Their proportions are not Mixamo's: arms and legs differ by a few centimetres.
 const TOLERANCE := 0.16
 
 var _failed := 0
@@ -29,7 +29,7 @@ func _initialize() -> void:
 		_check(puppet.add_clip(clip.get_file().get_basename(), FileAccess.get_file_as_bytes(skin + "/animations/" + clip)),
 			"%s loads" % clip)
 	_check(puppet.mapped_bones() >= 50, "52 bones map (%d)" % puppet.mapped_bones())
-	_check(puppet.height > 1.5 and puppet.height < 1.8, "she is a person's height (%.2f m)" % puppet.height)
+	_check(puppet.height > 1.5 and puppet.height < 1.8, "they are a person's height (%.2f m)" % puppet.height)
 
 	var tgt: Skeleton3D = puppet.skeleton
 	var src: Skeleton3D = puppet._src_skel
@@ -65,7 +65,7 @@ func _initialize() -> void:
 		var i := src.find_bone(hand)
 		travelled = maxf(travelled, (src.get_bone_global_pose(i).origin - src.get_bone_global_rest(i).origin).length())
 	_check(travelled > 0.25, "the greeting moves a hand %.2f m from rest (else these numbers are rest against rest)" % travelled)
-	# Two idles: the one that arches her back is not the one she stands in.
+	# Two idles: the one that arches them back is not the one they stand in.
 	_check(puppet.add_clip("idle__0", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle.fbx")), "Idle loads")
 	_check(puppet.add_clip("idle__1", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle2.fbx")), "Idle2 loads")
 	var lean0: float = await puppet.torso_lean("idle__0")
@@ -75,7 +75,7 @@ func _initialize() -> void:
 	var best: String = await puppet.choose_most_upright("idle", ["idle__0", "idle__1"])
 	_check(best == "idle__1", "the straighter one is chosen (%s)" % best)
 	_check(puppet._clips["idle"] == puppet._clips["idle__1"], "and it is what 'idle' plays")
-	# Her gaze: the head turns the rest of the way to a point, within what a neck can do, and lets go.
+	# Their gaze: the head turns the rest of the way to a point, within what a neck can do, and lets go.
 	puppet.play("idle", true)
 	puppet.seek(2.0)
 	await process_frame
@@ -90,18 +90,18 @@ func _initialize() -> void:
 		puppet._retarget()
 		puppet._apply_gaze(0.2)
 	var after := rad_to_deg(puppet.head_forward().angle_to(to_target))
-	_check(before > 20.0, "without it her head is well off the point (%.0f deg)" % before)
-	_check(after < 8.0, "with it her head points at it (%.0f deg)" % after)
+	_check(before > 20.0, "without it their head is well off the point (%.0f deg)" % before)
+	_check(after < 8.0, "with it their head points at it (%.0f deg)" % after)
 	_check(puppet.gaze_weight() > 0.99, "fully eased in")
-	# A point behind her: the neck stops where a neck stops, it does not wring.
+	# A point behind them: the neck stops where a neck stops, it does not wring.
 	puppet.set_gaze(Vector3(0.0, head_at.y, 3.0))
 	for i in 6:
 		puppet._retarget()
 		puppet._apply_gaze(0.2)
 	var f: Vector3 = puppet.head_forward()
 	var yaw := rad_to_deg(absf(atan2(f.x, -f.z)))
-	_check(yaw < 80.0, "a point behind her turns her head %.0f deg, not 180" % yaw)
-	# Let go: she eases back to what the clip does.
+	_check(yaw < 80.0, "a point behind their turns their head %.0f deg, not 180" % yaw)
+	# Let go: they ease back to what the clip does.
 	puppet.set_gaze(null)
 	for i in 30:
 		puppet._retarget()
@@ -119,7 +119,7 @@ func _check(ok: bool, what: String) -> void:
 		print("[rift-tests] FAIL: %s" % what)
 
 
-## Her face is what the WebUI avatar's is: the model's own expressions, layered, with a blink of her own.
+## Their face is what the WebUI avatar's is: the model's own expressions, layered, with a blink of their own.
 func _face_cases(puppet: Node3D, skin: String) -> void:
 	var face: RefCounted = puppet.face
 	_check(face != null and face.expression_names().size() >= 10, "the model's expressions were read (%d)" % (face.expression_names().size() if face != null else 0))
@@ -130,7 +130,7 @@ func _face_cases(puppet: Node3D, skin: String) -> void:
 		_check(face.has_expression(pair[0]), "'%s' is understood" % pair[0])
 	var persona: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(skin + "/persona.json"))
 	puppet.set_persona(persona)
-	_check(not (face.blendshape_map as Dictionary).is_empty(), "her persona's blendshape map is in")
+	_check(not (face.blendshape_map as Dictionary).is_empty(), "their persona's blendshape map is in")
 
 	face.auto_blink = true
 	face.set_face_values({})
@@ -141,7 +141,7 @@ func _face_cases(puppet: Node3D, skin: String) -> void:
 	for i in 30:
 		face.update(0.016)
 		peak = maxf(peak, _blend(face, "blink"))
-	_check(peak > 0.99, "she blinks: the lids close on the mesh itself (%.2f)" % peak)
+	_check(peak > 0.99, "they blink: the lids close on the mesh itself (%.2f)" % peak)
 	for i in 30:
 		face.update(0.016)
 	_check(_blend(face, "blink") < 0.01, "and open again (%.2f)" % _blend(face, "blink"))
@@ -154,10 +154,23 @@ func _face_cases(puppet: Node3D, skin: String) -> void:
 	face.update(0.016)
 	_check(_blend(face, "joy") < 0.01, "and lets go when it is dropped")
 	# Something else driving the blink: the automatic one stays out of it.
+	# Karada's face frame is an EMOTION state: `happy 0.65` is the persona's soft smile, not the whole joy face at 65%
+	# (eyes shut, mouth wide open: the dopey grin of the first sessions). Control: a name the persona does not know
+	# is still taken as a VRM expression, so the two readings are told apart.
+	face.set_face_values({"happy": 0.65, "relaxed": 0.5, "love": 0.01, "neutral": 0.3, "devotion": 0.28})
+	face.update(0.016)
+	_check(_blend(face, "joy") > 0.05 and _blend(face, "joy") < 0.25, "happy 0.65 is a gentle smile (joy %.2f), not 0.65" % _blend(face, "joy"))
+	_check(_blend(face, "fun") < 0.01, "relaxed is not the model's `fun` face (%.2f)" % _blend(face, "fun"))
+	face.set_face_values({"joy": 0.65})
+	face.update(0.016)
+	_check(absf(_blend(face, "joy") - 0.65) < 0.01, "a name the persona has no emotion for still reaches the model as it is (%.2f)" % _blend(face, "joy"))
+	face.set_face_values({})
+	face.update(0.016)
+
 	face.set_face_values({"eyes_closed": 1.0})
 	face.blink_now()
 	face.update(0.016)
-	_check(absf(_blend(face, "blink") - 1.0) < 0.01, "her eyes stay shut while the animation closes them")
+	_check(absf(_blend(face, "blink") - 1.0) < 0.01, "their eyes stay shut while the animation closes them")
 	face.set_face_values({})
 	# The overlay replaces; clear lets go.
 	face.set_overlay({"mouth_frown": 0.5})
@@ -166,15 +179,15 @@ func _face_cases(puppet: Node3D, skin: String) -> void:
 	face.set_overlay(null)
 	face.update(0.016)
 	_check(_blend(face, "sorrow") < 0.01, "and cleared")
-	# The mouth follows how loud she is, capped like the WebUI's.
+	# The mouth follows how loud they are, capped like the WebUI's.
 	for i in 40:
 		face.speak_level(0.5)
 		face.update(0.016)
-	_check(_blend(face, "a") > 0.3 and _blend(face, "a") <= 0.7001, "her mouth opens as she speaks (%.2f)" % _blend(face, "a"))
+	_check(_blend(face, "a") > 0.3 and _blend(face, "a") <= 0.7001, "their mouth opens as they speak (%.2f)" % _blend(face, "a"))
 	for i in 60:
 		face.speak_level(0.0)
 		face.update(0.016)
-	_check(_blend(face, "a") < 0.01, "and closes when she stops (%.2f)" % _blend(face, "a"))
+	_check(_blend(face, "a") < 0.01, "and closes when they stop (%.2f)" % _blend(face, "a"))
 	# A descriptor's frame window: think closes the eyes from a frame on.
 	face.set_descriptor({"fps": 30, "expressions": [{"start_frame": 0, "end_frame": 1000, "targets": {"mouth_smile": 0.6}}]})
 	face.update(0.016)

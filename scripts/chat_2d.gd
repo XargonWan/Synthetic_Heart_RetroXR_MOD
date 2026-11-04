@@ -1,4 +1,4 @@
-## Chat2D -- the page you write to Synth on, and read her answers on.
+## Chat2D -- the page you write to Synth on, and read their answers on.
 ## Loaded into ChatPanel's SubViewport via XRToolsViewport2DIn3D.
 ##
 ##   message_sent(text)   Enter in the field, or the Send button
@@ -70,7 +70,7 @@ func show_lines(lines: Array) -> void:
 	_redraw()
 
 
-## Whether she is listening: the mic says so (and says what the next press does).
+## Whether they are listening: the mic says so (and says what the next press does).
 func set_recording(on: bool) -> void:
 	if _mic == null:
 		return

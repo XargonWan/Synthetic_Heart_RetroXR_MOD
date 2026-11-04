@@ -15,14 +15,14 @@ const SOCKET_PATH := "/api/vessel/retroxr/ws"
 const CORE_VERBS: Array[String] = ["say", "move", "look", "use", "follow", "unfollow", "status"]
 const WORLD_VERBS: Array[String] = [
 	"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
-	# What she does on her own once asked; the result comes later, as an event (SynthRoutines).
+	# What they do on their own once asked; the result comes later, as an event (SynthRoutines).
 	"search", "explore", "watch", "bring", "stop",
 ]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
 const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
 
 
-## What this mod can really carry out. Synth is shown ONLY these (the hello says so): a verb she is
+## What this mod can really carry out. Synth is shown ONLY these (the hello says so): a verb they are
 ## offered and the body cannot do is a turn wasted on an error, which is how the first session went.
 ## Add a verb here when SynthBody.act does it, and not before.
 const IMPLEMENTED_VERBS: Array[String] = [
@@ -73,8 +73,8 @@ static func http_base(server: String) -> String:
 	return ("https://" if secure else "http://") + s if not s.is_empty() else ""
 
 
-## Where her face map (persona.json) may be, best first: the one the server names, then beside the model, then in her
-## skin's folder. A model served from /avatars/ has none beside it (the 404 that left her face on the wrong names).
+## Where their face map (persona.json) may be, best first: the one the server names, then beside the model, then in their
+## skin's folder. A model served from /avatars/ has none beside it (the 404 that left their face on the wrong names).
 static func persona_urls(assets: Dictionary, model_url: String) -> Array:
 	var urls: Array = []
 	var named: Variant = assets.get("persona")

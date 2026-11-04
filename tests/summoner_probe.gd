@@ -5,11 +5,11 @@
 ##
 ## What a player does: opens the object's menu, types the server and password, touches
 ## the screen. What must happen: the screen goes from red to Synth cyan, the teleport
-## sound plays while it loads, Synth steps out of the capsule and is told she was
-## summoned and what she sees (the player, whose head is the camera, included); a
-## second touch sends her back. PROBE_EXPECT picks the case:
+## sound plays while it loads, Synth steps out of the capsule and is told they were
+## summoned and what they see (the player, whose head is the camera, included); a
+## second touch sends them back. PROBE_EXPECT picks the case:
 ##   (none)     summon by touching the screen, Synth leaves (the server hangs up)
-##   dismiss    summon from the menu's button, then send her back by touching the screen
+##   dismiss    summon from the menu's button, then send them back by touching the screen
 ##   refused    the server wants another password
 ## Lines are [probe].
 extends Node
@@ -83,14 +83,14 @@ func _ready() -> void:
 	prop.add_to_group("spawned")
 	add_child(prop)
 
-	# A Game Boy Color on the floor BEHIND the pod (its back is -Z): she cannot see it from where she steps out, so
-	# "bring me the Game Boy" means looking for it. A loose object she can lift, named the way the room names one.
+	# A Game Boy Color on the floor BEHIND the pod (its back is -Z): they cannot see it from where they step out, so
+	# "bring me the Game Boy" means looking for it. A loose object they can lift, named the way the room names one.
 	_game_boy = _make_game_boy()
 	add_child(_game_boy)
 	_game_boy.position = Vector3(-2.2, 0.12, -2.4)
 	_game_boy.add_to_group("spawned")
 
-	# A TV that is on, in front and to the right: a lit screen she can watch and take a picture of.
+	# A TV that is on, in front and to the right: a lit screen they can watch and take a picture of.
 	_tv = _make_tv()
 	add_child(_tv)
 	_tv.position = Vector3(2.0, 0.9, 2.4)
@@ -289,7 +289,7 @@ func _menu_then_open() -> void:
 	_check(saved.get("server") == server and saved.get("token") == "s3cret", "typing in the menu saves the settings")
 
 	# The pod is NOT frozen from here on: a body that overlaps a rigid pod pushes it, and that
-	# is the very thing this must not do (it slid away when she stepped out).
+	# is the very thing this must not do (it slid away when they stepped out).
 	_summoner.freeze = false
 	_pod_at = _summoner.global_position
 	if _expect == "dismiss":
@@ -342,11 +342,11 @@ func _process(delta: float) -> void:
 		print("[probe] body appeared at %s" % str(body.global_position))
 		_check(_flat_distance(body, _summoner) < 0.3, "the body appears inside the capsule")
 		_put_down_a_vase.call_deferred()
-		_check(body.presence() == "summon", "Karada says she is being summoned while she steps out (%s)" % body.presence())
+		_check(body.presence() == "summon", "Karada says they are being summoned while they step out (%s)" % body.presence())
 		_saw_summon = true
-		# The floor is at y = 0 and the capsule's centre at 0.3: she stands on the floor, not on the capsule.
-		_check(absf(body.global_position.y) < 0.05, "she stands on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
-	# Karada drives her: think while the avatar thinks, her voice from her head, idle again after.
+		# The floor is at y = 0 and the capsule's centre at 0.3: they stand on the floor, not on the capsule.
+		_check(absf(body.global_position.y) < 0.05, "they stand on the floor (y=%.2f), not on top of the capsule" % body.global_position.y)
+	# Karada drives them: think while the avatar thinks, their voice from their head, idle again after.
 	if body != null and body.has_puppet():
 		if body.karada_state() == "think" and body._puppet.playing() == "think":
 			_saw_think = true
@@ -361,10 +361,10 @@ func _process(delta: float) -> void:
 			_saw_sit = true
 		if body.holding() == "Game Boy Color":
 			_saw_holding = true
-		# It flies to her hands over a moment (it was 1 m away when she took it); after that it stays there.
+		# It flies to their hands over a moment (it was 1 m away when they took it); after that it stays there.
 		_held_for = _held_for + get_process_delta_time() if body.holding() != "" else 0.0
 		if _held_for > 1.0 and _game_boy != null and is_instance_valid(_game_boy) and _game_boy.global_position.distance_to(body.hand_point()) > 0.4:
-			_check(false, "what she holds stays in her hands, not left behind (%.2f m)" % _game_boy.global_position.distance_to(body.hand_point()))
+			_check(false, "what they hold stays in their hands, not left behind (%.2f m)" % _game_boy.global_position.distance_to(body.hand_point()))
 		if body.voices_played() >= 1:
 			_saw_voice = true
 		if _saw_summon and body.presence() == "" and not _summon_ended:
@@ -387,15 +387,15 @@ func _process(delta: float) -> void:
 			_was_blinking = blinking
 		if _saw_think and body.karada_state() == "idle" and body._puppet.playing() == "idle":
 			_saw_idle_again = true
-	# What Synth says lands in the chat log (the harness makes her say a line once she is out).
+	# What Synth says lands in the chat log (the harness makes their say a line once they are out).
 	if body != null and not _saw_synth_line:
 		for line: Dictionary in body.chat_lines():
 			if line["who"] == "synth":
 				_saw_synth_line = true
-	# Intangible while she is inside the pod and walking out of it, solid once she is out.
+	# Intangible while they are inside the pod and walking out of it, solid once they are out.
 	if body != null and _summoner.phase() == 2 and body.is_ethereal():
 		_was_ethereal = true
-		_check(body.collision_layer == 0, "she has no collision while she steps out")
+		_check(body.collision_layer == 0, "they have no collision while they step out")
 		_check(_summoner.global_position.distance_to(_pod_at) < 0.03, "the pod stays where it stood (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
 	if _summoner.phase() == 2 and not _checked_arriving:
 		_checked_arriving = true
@@ -409,41 +409,41 @@ func _process(delta: float) -> void:
 		_check(_menu_ui._power.text == "Close the rift", "the button offers to close it")
 		_check(_summoner._screen_label.text == "ONLINE", "the screen says ONLINE")
 		_check(body != null and _flat_distance(body, _summoner) > 0.9,
-			"she has stepped out of the capsule (%.2f m)" % _flat_distance(body, _summoner))
+			"they have stepped out of the capsule (%.2f m)" % _flat_distance(body, _summoner))
 		_check(_summoner.phase() == 3, "it is OPEN")
-		_check(_was_ethereal, "she was intangible on the way out")
-		_check(not body.is_ethereal() and body.collision_layer == 1, "and is solid now she is out")
-		_check(body.gaze_kind() == "player" or body._look_kind == "player" and body._look_left > 0.0, "she looks at the player as she arrives")
+		_check(_was_ethereal, "they were intangible on the way out")
+		_check(not body.is_ethereal() and body.collision_layer == 1, "and is solid now they are out")
+		_check(body.gaze_kind() == "player" or body._look_kind == "player" and body._look_left > 0.0, "they look at the player as they arrive")
 		_check(_summoner.global_position.distance_to(_pod_at) < 0.05, "the pod never moved (%.3f m)" % _summoner.global_position.distance_to(_pod_at))
-		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to her (%s)" % _menu_ui._status.text)
+		_check(_menu_ui._status.text.contains("Tab"), "the menu says how to talk to them (%s)" % _menu_ui._status.text)
 		_chat_roundtrip(body)
 		_gaze_roundtrip(body)
-		# Her own body, from her skin: the model and the animations were fetched from the server.
-		_check(body.has_puppet(), "she wears her own body (Rei's VRM), not the capsule")
+		# Their own body, from their skin: the model and the animations were fetched from the server.
+		_check(body.has_puppet(), "they wear their own body (Rei's VRM), not the capsule")
 		if body.has_puppet():
 			var puppet: Node3D = body._puppet
-			_check(puppet.mapped_bones() > 40, "her animations are bound to her bones (%d)" % puppet.mapped_bones())
-			_check(puppet.has_clip("idle") and puppet.has_clip("greet"), "her idle and greeting arrived")
-			_check(puppet.height > 1.4 and puppet.height < 1.9, "she is a person's height (%.2f m)" % puppet.height)
+			_check(puppet.mapped_bones() > 40, "their animations are bound to their bones (%d)" % puppet.mapped_bones())
+			_check(puppet.has_clip("idle") and puppet.has_clip("greet"), "their idle and greeting arrived")
+			_check(puppet.height > 1.4 and puppet.height < 1.9, "they are a person's height (%.2f m)" % puppet.height)
 			_check(not body._capsule.visible, "the capsule is hidden")
-			_check(puppet.playing() in ["greet", "idle"], "she is playing an animation (%s)" % puppet.playing())
-		# She faces the player: the camera is at -X/-Z of her.
+			_check(puppet.playing() in ["greet", "idle"], "they are playing an animation (%s)" % puppet.playing())
+		# They face the player: the camera is at -X/-Z of them.
 		var fwd: Vector3 = -body.global_basis.z
 		var to_cam: Vector3 = (_camera.global_position - body.global_position)
 		to_cam.y = 0.0
-		_check(fwd.dot(to_cam.normalized()) > 0.9, "she turned to face the player")
+		_check(fwd.dot(to_cam.normalized()) > 0.9, "they turned to face the player")
 
 	if _expect == "dismiss":
 		if _summoner.phase() == 3 and not _dismissing:
 			if not _early_touch_done:
-				# Touching right away must not dismiss her (the hand is still over the screen).
+				# Touching right away must not dismiss them (the hand is still over the screen).
 				_early_touch_done = true
 				_summoner._button.button_pressed.emit()
-				_check(_summoner.phase() == 3, "a touch straight after she arrives does not send her back")
+				_check(_summoner.phase() == 3, "a touch straight after they arrive does not send them back")
 			elif _summoner._open_t >= _summoner.DISMISS_GRACE:
 				_dismissing = true
 				_summoner._button.button_pressed.emit()
-				_check(_summoner.phase() == 4, "a touch later sends her back (LEAVING)")
+				_check(_summoner.phase() == 4, "a touch later sends them back (LEAVING)")
 				_check(_summoner._sfx.stream == Sounds.stream("leave"), "the leaving sound plays")
 		if _dismissing and _summoner.phase() == 0:
 			_check(_summoner.get_parent().get_node_or_null("SynthBody") == null or
@@ -458,29 +458,29 @@ func _process(delta: float) -> void:
 			_finish("timeout")
 		return
 
-	# Default case: Synth hangs up (the harness disconnects her).
+	# Default case: Synth hangs up (the harness disconnects them).
 	if _saw_open_text and not _summoner.is_on():
 		_check(_summoner.get_parent().get_node_or_null("SynthBody") == null or
 			_summoner.get_parent().get_node("SynthBody").is_queued_for_deletion(), "the body goes when the rift closes")
 		_check(_screen_is_red(), "the screen is red again")
 		_check(_saw_cyan, "the screen was cyan while open")
 		_check(_saw_synth_line, "what Synth said reached the chat log")
-		_check(_saw_think, "her body played the think clip when Karada said think")
-		_check(_saw_holding, "she picked the Game Boy up (the object was carried in her hands)")
+		_check(_saw_think, "their body played the think clip when Karada said think")
+		_check(_saw_holding, "they picked the Game Boy up (the object was carried in their hands)")
 		_check(_game_boy.global_position.distance_to(Vector3(_camera.global_position.x, 0.0, _camera.global_position.z)) < 1.8 or _game_boy.global_position.distance_to(_camera.global_position) < 1.8,
 				"and it ended up with the player, who is 3 m from where it was (%.2f m from them)" % _game_boy.global_position.distance_to(_camera.global_position))
 		_check(not _game_boy.freeze and _game_boy.collision_layer != 0, "and it is a loose object again, not frozen in the air")
-		_check(_saw_layer, "gaming: her hands played over a standing body (a layer from the server's clip and descriptor)")
-		_check(_saw_crouch and _saw_stand_up, "crouch: she crouched and then stood up with the clip that ends the state")
-		_check(_saw_sit, "sit: she sat")
-		_check(_summon_ended, "and the presence ended once she was out (the server heard `summoned`)")
-		_check(_saw_voice, "her voice (a WAV from the server) was played from her head")
-		_check(_saw_mouth, "her mouth opened while she spoke")
-		_check(not _saw_status_label, "nothing is written over her head about what she is doing")
-		_check(_saw_joy, "an emotion Karada sent showed on her face")
-		_check(_saw_swap, "a change of skin put her in a new body")
-		_check(_blinks >= 1, "she blinked by herself (%d)" % _blinks)
-		_check(_saw_idle_again, "and she went back to idle when Karada did")
+		_check(_saw_layer, "gaming: their hands played over a standing body (a layer from the server's clip and descriptor)")
+		_check(_saw_crouch and _saw_stand_up, "crouch: they crouched and then stood up with the clip that ends the state")
+		_check(_saw_sit, "sit: they sat")
+		_check(_summon_ended, "and the presence ended once they were out (the server heard `summoned`)")
+		_check(_saw_voice, "their voice (a WAV from the server) was played from their head")
+		_check(_saw_mouth, "their mouth opened while they spoke")
+		_check(not _saw_status_label, "nothing is written over their head about what they are doing")
+		_check(_saw_joy, "an emotion Karada sent showed on their face")
+		_check(_saw_swap, "a change of skin put them in a new body")
+		_check(_blinks >= 1, "they blinked by themself (%d)" % _blinks)
+		_check(_saw_idle_again, "and they went back to idle when Karada did")
 		_check(_menu_ui._status.text == "Synth left the room", "the menu says why it closed (got '%s')" % _menu_ui._status.text)
 		_check(_phases.slice(0, 5) == [1, 2, 3, 0], "the phases went CHARGING, ARRIVING, OPEN, IDLE (%s)" % str(_phases))
 		_finish("closed by Synth")
@@ -489,7 +489,7 @@ func _process(delta: float) -> void:
 		_finish("timeout")
 
 
-## Talking to her: point at HER (the ray Tab uses finds her, not the pod), open her page, write.
+## Talking to them: point at THEM (the ray Tab uses finds them, not the pod), open their page, write.
 func _chat_roundtrip(body: Node3D) -> void:
 	if _chat_done:
 		return
@@ -506,20 +506,20 @@ func _chat_roundtrip(body: Node3D) -> void:
 			host = node
 			break
 		node = node.get_parent()
-	_check(host == body, "the Tab ray, aimed at her, finds HER and not the pod")
+	_check(host == body, "the Tab ray, aimed at them, finds THEM and not the pod")
 	body.toggle_options_ui(_camera)
 	for i in 6:
 		await get_tree().process_frame
 	var panel := body.get_node_or_null("ChatPanel")
-	_check(panel != null and panel.visible, "her chat page opens")
+	_check(panel != null and panel.visible, "their chat page opens")
 	if panel == null:
 		return
 	var rel: Vector3 = panel.global_position - body.global_position
 	var toward: Vector3 = (_camera.global_position - body.global_position)
 	toward.y = 0.0
-	_check(rel.y > 0.3 and rel.y < 0.9, "under her, low, not over her shoulder (%.2f m up)" % rel.y)
+	_check(rel.y > 0.3 and rel.y < 0.9, "under them, low, not over their shoulder (%.2f m up)" % rel.y)
 	_check(Vector2(rel.x, rel.z).normalized().dot(Vector2(toward.x, toward.z).normalized()) > 0.9 and Vector2(rel.x, rel.z).length() > 0.4,
-		"in front of her, toward the player (%.2f m)" % Vector2(rel.x, rel.z).length())
+		"in front of them, toward the player (%.2f m)" % Vector2(rel.x, rel.z).length())
 	var ui: Control = panel._get_ui()
 	_check(ui != null, "the chat page loaded")
 	if ui == null:
@@ -532,13 +532,13 @@ func _chat_roundtrip(body: Node3D) -> void:
 	_check(ui._edit.text == "", "the field is emptied")
 
 
-## The reflex is a GLANCE: the player moves, she looks at them for a moment, then relaxes, and does not
-## look again for a while whatever they do; she never drops what she chose to look at.
+## The reflex is a GLANCE: the player moves, they look at the player for a moment, then relax, and do not
+## look again for a while whatever they do; they never drop what they chose to look at.
 func _gaze_roundtrip(body: Node3D) -> void:
 	if _gaze_checked:
 		return
 	_gaze_checked = true
-	# Let her finish whatever she was asked to do (the server is still sending commands), then be still.
+	# Let their finish whatever they were asked to do (the server is still sending commands), then be still.
 	for i in 600:
 		await get_tree().create_timer(0.1).timeout
 		if not is_instance_valid(body):
@@ -550,24 +550,24 @@ func _gaze_roundtrip(body: Node3D) -> void:
 		panel.hide_panel()
 	body._glance_cool = 0.0
 	await get_tree().create_timer(2.5).timeout
-	_check(not body.is_gazing(), "she is not staring at a player who is standing still")
+	_check(not body.is_gazing(), "they are not staring at a player who is standing still")
 	_camera.global_position += Vector3(0.6, 0, 0)       # the player steps sideways
 	await get_tree().create_timer(0.9).timeout
-	_check(body.gaze_kind() == "player", "the player moved: she glances at them")
+	_check(body.gaze_kind() == "player", "the player moved: they glance at the player")
 	# A glance is short (2.2 s, then it eases out in 0.3).
 	await get_tree().create_timer(2.6).timeout
-	_check(not body.is_gazing(), "and relaxes by herself, though the player has not stopped moving")
+	_check(not body.is_gazing(), "and relaxes by themself, though the player has not stopped moving")
 	# ...and a player who keeps moving does not draw another one for a good while.
 	_camera.global_position += Vector3(-0.6, 0, 0)
 	await get_tree().create_timer(1.0).timeout
-	_check(not body.is_gazing(), "a player who keeps moving does not make her stare (the cooldown)")
-	# She decides to look at something: the reflex stays out of it, and her head goes to it.
+	_check(not body.is_gazing(), "a player who keeps moving does not make their stare (the cooldown)")
+	# They decide to look at something: the reflex stays out of it, and their head goes to it.
 	body._glance_cool = 0.0
 	body.act("look_at", {"target": "Crate"})
 	_camera.global_position += Vector3(0.6, 0, 0)
 	await get_tree().create_timer(0.9).timeout
-	_check(body.gaze_kind() == "point", "what she chose to look at gets her head, and the player moving does not pull it away (%s)" % body.gaze_kind())
-	# The gaze test is over: the harness may now ask her to look for things (a search turns her body about).
+	_check(body.gaze_kind() == "point", "what they chose to look at gets their head, and the player moving does not pull it away (%s)" % body.gaze_kind())
+	# The gaze test is over: the harness may now ask them to look for things (a search turns their body about).
 	var flag := OS.get_environment("GAZE_DONE_FILE")
 	if not flag.is_empty():
 		FileAccess.open(flag, FileAccess.WRITE).store_string("done")
@@ -579,7 +579,7 @@ func _finish(what: String) -> void:
 	get_tree().quit(1 if _failed > 0 else 0)
 
 
-## Something put down in the room while she is out: she is told (the harness checks the event).
+## Something put down in the room while they are out: they are told (the harness checks the event).
 func _make_tv() -> StaticBody3D:
 	var script := GDScript.new()
 	script.source_code = "extends StaticBody3D\nvar display_name := 'TV'\nfunc is_on() -> bool:\n\treturn true\n"
@@ -608,7 +608,7 @@ func _make_tv() -> StaticBody3D:
 	screen.position = Vector3(0, 0, -0.26)
 	screen.rotation_degrees = Vector3(0, 180, 0)
 	tv.add_child(screen)
-	# A picture on a screen: bars, so that a picture of it says something (and the side she sees it from does not matter).
+	# A picture on a screen: bars, so that a picture of it says something (and the side they see it from does not matter).
 	for k in 6:
 		var bar := MeshInstance3D.new()
 		var bm := BoxMesh.new()
@@ -625,7 +625,7 @@ func _make_tv() -> StaticBody3D:
 	bshape.size = box.size
 	shape.shape = bshape
 	tv.add_child(shape)
-	tv.rotation_degrees = Vector3(0, 53, 0)  # the screen faces the way she comes from
+	tv.rotation_degrees = Vector3(0, 53, 0)  # the screen faces the way they come from
 	return tv
 
 

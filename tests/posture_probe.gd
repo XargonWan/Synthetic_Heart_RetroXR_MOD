@@ -1,5 +1,5 @@
 ## Numbers for a posture: how each part of the spine and the legs leans, in the side view, in the
-## animation's own skeleton and in hers, at rest and posed. Answers "why is she arched?".
+## animation's own skeleton and in theirs, at rest and posed. Answers "why is they arched?".
 ##
 ##   SKIN=$HOME/gits/Synthetic_Heart-retroxr/skins/Rei CLIP="idle/Idle.fbx" godot --headless --path RetroXR \
 ##       --script res://mods/xenu.synth_rift/tests/posture_probe.gd
@@ -21,7 +21,7 @@ func _initialize() -> void:
 	# + leaning BACK (the way an arch goes), seen with the body facing its own front.
 	var chains := {
 		"src": [src, ["mixamorig_Hips", "mixamorig_Spine", "mixamorig_Spine1", "mixamorig_Spine2", "mixamorig_Neck", "mixamorig_Head", "mixamorig_HeadTop_End"], -1.0],
-		"her": [tgt, ["J_Bip_C_Hips", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest", "J_Bip_C_Neck", "J_Bip_C_Head", "J_Adj_C_FaceEye"], 1.0],
+		"them": [tgt, ["J_Bip_C_Hips", "J_Bip_C_Spine", "J_Bip_C_Chest", "J_Bip_C_UpperChest", "J_Bip_C_Neck", "J_Bip_C_Head", "J_Adj_C_FaceEye"], 1.0],
 	}
 	# The whole torso as one line, hips to neck, against the vertical: positive leans FORWARD.
 	var hips_s := src.find_bone("mixamorig_Hips")
@@ -62,21 +62,21 @@ func _initialize() -> void:
 					line.append("?")
 					continue
 				var d := sk.get_bone_global_pose(b).origin - sk.get_bone_global_pose(a).origin
-				# The body's front is +Z for the animation and -Z for her: lean-back is toward -front.
+				# The body's front is +Z for the animation and -Z for them: lean-back is toward -front.
 				var lean := rad_to_deg(atan2(-d.z * facing, d.y))
 				total += lean
 				line.append("%+.1f" % lean)
 			print("[probe] t=%.0f %s segment lean back (deg): %s" % [t, who, " ".join(line)])
-	# Rest, for her.
+	# Rest, for them.
 	puppet.play("c", false)
 	var rest := PackedStringArray()
-	var names2: Array = chains["her"][1]
+	var names2: Array = chains["them"][1]
 	for i in names2.size() - 1:
 		var a := tgt.find_bone(names2[i])
 		var b := tgt.find_bone(names2[i + 1])
 		var d := tgt.get_bone_global_rest(b).origin - tgt.get_bone_global_rest(a).origin
 		rest.append("%+.1f" % rad_to_deg(atan2(-d.z, d.y)))
-	print("[probe] her REST segment lean back (deg): %s" % " ".join(rest))
+	print("[probe] their REST segment lean back (deg): %s" % " ".join(rest))
 	var rest_src := PackedStringArray()
 	var names3: Array = chains["src"][1]
 	for i in names3.size() - 1:

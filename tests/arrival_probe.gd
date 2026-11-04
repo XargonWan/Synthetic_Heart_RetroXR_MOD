@@ -1,10 +1,10 @@
-## How she comes into view: ONE fade of the whole body, and nothing left to do on the frame she appears.
+## How they come into view: ONE fade of the whole body, and nothing left to do on the frame they appear.
 ## WINDOWED (never --headless: the dummy renderer draws nothing).
 ##
 ##   SKIN=$HOME/gits/Synthetic_Heart/skins/Rei OUT=/some/folder godot --path RetroXR --resolution 640x480 \
 ##       --position 20,20 res://mods/xenu.synth_rift/tests/arrival_probe.tscn [-- --nowarm]
 ##
-## Per frame while she fades in it checks that every part of her has the SAME transparency (nothing arrives
+## Per frame while they fade in it checks that every part of them has the SAME transparency (nothing arrives
 ## after the rest) and it measures the frame times: a first draw that compiles pipelines and uploads textures
 ## is a hitch of tens of milliseconds, which is what "arriving in pieces" is. --nowarm is the control: without
 ## the warm-up the hitch must show, or the number says nothing.

@@ -1,13 +1,13 @@
 ## ChatPanel -- the chat page, floating beside Synth.
 ##
-## Opened the way every object's menu is: point at HER and press the left thumbstick (Tab on a
-## desktop); the controller calls her body's toggle_options_ui. The page keeps nothing: the body
+## Opened the way every object's menu is: point at THEM and press the left thumbstick (Tab on a
+## desktop); the controller calls their body's toggle_options_ui. The page keeps nothing: the body
 ## keeps the log, this shows it and hands what is written back.
 extends FloatingObjectPanel3D
 
 const PANEL_SCENE := preload("res://mods/xenu.synth_rift/scenes/chat_panel.tscn")
 const NODE_NAME := "ChatPanel"
-## UNDER her: low in front of her feet, toward the player, where a person looks down to read.
+## UNDER them: low in front of their feet, toward the player, where a person looks down to read.
 const HEIGHT := 0.55
 const TOWARD_PLAYER := 0.65
 
@@ -78,7 +78,7 @@ func _refresh() -> void:
 
 
 ## No subject: FloatingObjectPanel3D lifts a panel clear of its subject's box, and this one is
-## meant to hang in front of her legs, which is inside it.
+## meant to hang in front of their legs, which is inside it.
 func _target_node() -> Node3D:
 	return null
 

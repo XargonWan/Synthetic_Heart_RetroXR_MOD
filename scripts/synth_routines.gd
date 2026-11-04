@@ -1,9 +1,9 @@
-## SynthRoutines -- what she does ON HER OWN once she has been asked: look for something, look around, watch the TV,
+## SynthRoutines -- what they do ON THEIR OWN once they have been asked: look for something, look around, watch the TV,
 ## fetch an object.
 ##
 ## The model chooses the behaviour and is told the result AFTER, as an event (a turn of its own); in between it is not
-## asked anything, the way a Minecraft body goes on mining while it thinks. Each routine is real: she finds a thing by
-## SEEING it (what a person in front of her would see, `SynthBody.sight`), never by looking it up, so "bring me the
+## asked anything, the way a Minecraft body goes on mining while it thinks. Each routine is real: they find a thing by
+## SEEING it (what a person in front of their would see, `SynthBody.sight`), never by looking it up, so "bring me the
 ## Game Boy" can end in "I looked everywhere and it is not here". A new routine, a `stop` or a `move` replaces the one
 ## running.
 extends Node
@@ -15,13 +15,13 @@ signal done(kind: String, ok: bool, summary: String, data: Dictionary)
 
 const SCAN_STEPS := 8                # a full turn, in steps of 45 degrees
 const SCAN_STEP_SECONDS := 0.55
-const WAYPOINTS := 4                 # places she walks to look from, at most
+const WAYPOINTS := 4                 # places they walk to look from, at most
 const SEARCH_SECONDS := 50.0
 const WATCH_SECONDS := 10.0
 const WATCH_MAX := 30.0
 const WATCH_DISTANCE := 1.7
-const REACH := 0.75                  # how close she stands to take something
-const HOLD_OUT_SECONDS := 8.0        # how long she holds a thing out to the player
+const REACH := 0.75                  # how close they stand to take something
+const HOLD_OUT_SECONDS := 8.0        # how long they hold a thing out to the player
 
 ## The SynthBody (untyped: it is a script of the mod and this one is loaded first).
 @warning_ignore("untyped_declaration")
@@ -48,15 +48,15 @@ func start(kind: String, payload: Dictionary) -> Dictionary:
 	return {"ok": true, "detail": _started_text(kind, payload), "data": {"routine": kind}}
 
 
-## Stop what she is doing (she says nothing about it: it is the model that told her to).
+## Stop what they are doing. NOTHING is told to Synth: it is the model that asked for the replacement (or the stop), and a
+## "you stopped" event is a turn of its own -- the model answered the player's last message AGAIN each time, which read as
+## the same reply twice (an `explore` replaced by an `explore` gave three turns for one request).
 func cancel(why: String = "stopped") -> void:
 	if running == "":
 		return
-	print("[Rift] routine %s cancelled: %s" % [running, why])
+	print("[Rift] routine %s cancelled: %s (Synth is not told: no turn)" % [running, why])
 	_token += 1
-	var kind := running
 	running = ""
-	done.emit(kind, false, "You stopped what you were doing (%s): %s." % [kind, why], {"reason": why})
 
 
 func _started_text(kind: String, payload: Dictionary) -> String:
@@ -121,12 +121,12 @@ func _run(kind: String, payload: Dictionary, mine: int) -> void:
 
 # ── seeing ───────────────────────────────────────────────────────────────────
 
-## What she sees right now, or [].
+## What they see right now, or [].
 func _sight() -> Array:
 	return body.sight.call() if body.sight.is_valid() else []
 
 
-## The best of what she sees that `query` names (exact over partial, then nearest), or {}.
+## The best of what they see that `query` names (exact over partial, then nearest), or {}.
 func _find_in(seen: Array, query: String) -> Dictionary:
 	var best: Dictionary = {}
 	var best_score := 0
@@ -178,7 +178,7 @@ func _scan(query: String, collect: Dictionary, mine: int) -> Dictionary:
 	return {}
 
 
-## A place to look from she has not looked from: far from where she has been, inside her leash.
+## A place to look from they have not looked from: far from where they have been, inside their leash.
 func _next_waypoint(visited: Array) -> Variant:
 	var best: Variant = null
 	var best_gap := 0.0
@@ -203,8 +203,8 @@ func _walk(point: Vector3, mine: int) -> bool:
 
 # ── the routines ─────────────────────────────────────────────────────────────
 
-## Find what `query` names: in front of her already, else by turning round and walking to somewhere else and again.
-## Returns the entity she SAW, or {} (the routine has then been finished as a failure when `report`).
+## Find what `query` names: in front of their already, else by turning round and walking to somewhere else and again.
+## Returns the entity they SAW, or {} (the routine has then been finished as a failure when `report`).
 func _acquire(query: String, mine: int, report: bool, kind: String) -> Dictionary:
 	var collect: Dictionary = {}
 	var hit := _find_in(_sight(), query)
@@ -280,7 +280,7 @@ func _watch(query: String, seconds: float, mine: int) -> void:
 	var hit := await _acquire(query, mine, true, "watch")
 	if hit.is_empty():
 		return
-	# Stand a little way off on the side she came from, facing it.
+	# Stand a little way off on the side they came from, facing it.
 	var p: Vector3 = hit["position"]
 	var back := Vector3(body.global_position.x - p.x, 0.0, body.global_position.z - p.z)
 	if back.length() > 0.01:
@@ -296,11 +296,11 @@ func _watch(query: String, seconds: float, mine: int) -> void:
 	if not live.is_empty() and live.has("powered"):
 		text += " It is switched %s." % ("on" if bool(live["powered"]) else "off")
 		data["powered"] = bool(live["powered"])
-	# What her eyes took (a picture, when pictures are on): the picture is how she can say what is on it.
+	# What their eyes took (a picture, when pictures are on): the picture is how they can say what is on it.
 	var shot: Dictionary = await body.take_picture(p)
 	if bool(shot.get("ok", false)):
 		data["image_jpeg_b64"] = shot["jpeg_b64"]
-		text += " A picture of what she was looking at is attached."
+		text += " A picture of what they were looking at is attached."
 	_finish(mine, "watch", true, text, data)
 
 
@@ -340,7 +340,7 @@ func _pick_up(query: String, mine: int, report: bool) -> bool:
 	return true
 
 
-## Take what she holds to the player and hold it out until they take it, or put it down in front of them.
+## Take what they hold to the player and hold it out until they take it, or put it down in front of them.
 func _hand_over(mine: int, report: bool) -> bool:
 	var held: String = body.holding()
 	if held == "":
@@ -396,8 +396,8 @@ func _put_down(mine: int) -> void:
 
 # ── life while nobody asks anything ──────────────────────────────────────────
 
-## Now and then her head goes to something that is really there: a machine that is on, the TV, the player. Never told
-## to the model (it is not news), never a thing that is not in front of her.
+## Now and then their head goes to something that is really there: a machine that is on, the TV, the player. Never told
+## to the model (it is not news), never a thing that is not in front of them.
 func idle_curiosity(delta: float, speaking: bool) -> void:
 	if running != "" or speaking or body == null or body.is_walking():
 		_idle_clock = maxf(_idle_clock, 8.0)
@@ -420,4 +420,4 @@ func idle_curiosity(delta: float, speaking: bool) -> void:
 		return
 	var pick: Dictionary = interesting[randi() % interesting.size()]
 	body.study_point(pick["position"], randf_range(2.5, 5.0))
-	print("[Rift] idle: she looks at %s" % str(pick.get("name", "?")))
+	print("[Rift] idle: they look at %s" % str(pick.get("name", "?")))

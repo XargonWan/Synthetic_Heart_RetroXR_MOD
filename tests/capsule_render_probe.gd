@@ -95,7 +95,7 @@ func _shoot(out: String, shot: String, from: Vector3, at: Vector3) -> void:
 	print("[probe] %s %s (%dx%d)" % [shot, path, img.get_width(), img.get_height()])
 
 
-## Rei out of the pod with her chat page beside her. Needs SKIN (a Karada skin folder).
+## Rei out of the pod with their chat page beside them. Needs SKIN (a Karada skin folder).
 func _with_synth(out: String) -> void:
 	var skin := OS.get_environment("SKIN")
 	if skin.is_empty():

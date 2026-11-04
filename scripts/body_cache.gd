@@ -1,4 +1,4 @@
-## BodyCache -- her body, brought inside its budget once and kept.
+## BodyCache -- their body, brought inside its budget once and kept.
 ##
 ## Making a body costs seconds (parse a 20 MB .vrm, decode and compress its textures, rebuild its meshes). The
 ## result is the same every time for the same file and tier, so it is saved as a scene under user:// and read
@@ -6,7 +6,7 @@
 ## changed skin, another tier or a new budget version is a different name, so none of them can be served a body
 ## that was made for another.
 ##
-## It never gets in her way: a file that is missing, truncated, from another version or that will not load is
+## It never gets in their way: a file that is missing, truncated, from another version or that will not load is
 ## logged and the body is made again; a cache that cannot be written (a full disk) is logged and skipped.
 ## Only the three most recent bodies are kept.
 extends RefCounted

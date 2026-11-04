@@ -1,9 +1,9 @@
-## SummonerView -- what Synth sees when she steps out, in words.
+## SummonerView -- what Synth sees when they step out, in words.
 ##
 ## Pure maths and text, so a test can read it. The body faces `forward`; everything
 ## in the room is placed by its bearing from there (0 straight ahead, positive to the
 ## right) and its distance. Synth gets the front of the room first -- who is in front
-## of her, the player above all -- and a line for what is behind.
+## of them, the player above all -- and a line for what is behind.
 extends RefCounted
 
 ## What counts as "in front": what a person sees without turning, about 180 degrees (WorldView.FOV_DEG).
@@ -60,12 +60,12 @@ static func place(entities: Array, origin: Vector3, forward: Vector3) -> Array:
 	return out
 
 
-## The message Synth reads when she has just been summoned.
+## The message Synth reads when they have just been summoned.
 static func summoned_text(room: String, placed: Array) -> String:
 	var front: Array = placed.filter(func(e: Dictionary) -> bool: return e["front"])
 	var behind: Array = placed.filter(func(e: Dictionary) -> bool: return not e["front"])
 	var text := "You have just been summoned into the RetroXR room '%s' through the Synthetic Heart Rift Summoner, and you have stepped out of its capsule. " % room
-	# The player first: they are who called her.
+	# The player first: they are who called them.
 	var player: Dictionary = {}
 	for e: Dictionary in front:
 		if str(e.get("type", "")) == "player":
@@ -97,16 +97,16 @@ static func _label(e: Dictionary) -> String:
 	return "%s (%s)" % [label, sid] if not sid.is_empty() else label
 
 
-## Kinds that are dragged about by hand and by physics all the time: a cord leaving or entering her view is not news.
+## Kinds that are dragged about by hand and by physics all the time: a cord leaving or entering their view is not news.
 const QUIET_KINDS := ["cable", "link cable", "power cord"]
 
 
 ## What changed in the room since the last look, in words: something new in view, something gone, a machine switched
-## on or off. `memory` ({name: {label, powered, id, missing_since?}}) is what she saw last time and is brought up to
+## on or off. `memory` ({name: {label, powered, id, missing_since?}}) is what they saw last time and is brought up to
 ## date; the first call only remembers (nothing is "new" to someone who has just arrived). The player is not part of it.
 ##
-## `existing_ids` (the ids of everything in the room, in view or not): a thing she no longer sees but that still exists
-## went out of SIGHT, it is not gone, so nothing is said and it is remembered as it was (turning her head used to make
+## `existing_ids` (the ids of everything in the room, in view or not): a thing they no longer see but that still exists
+## went out of SIGHT, it is not gone, so nothing is said and it is remembered as it was (turning their head used to make
 ## the whole room "no longer there"). Empty = unknown, and the old rule holds. Cords are never reported.
 ##
 ## `gone_delay` (seconds, measured on `clock`): a thing that stops existing is NOT declared gone at once. It may have

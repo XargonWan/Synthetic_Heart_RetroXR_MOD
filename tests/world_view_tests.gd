@@ -2,8 +2,8 @@
 ##
 ##   godot --headless --path RetroXR --script res://mods/xenu.synth_rift/tests/world_view_tests.gd
 ##
-## The log of a real session had her told "Cable / Node3D", "@RigidBody3D@4173" and, once, nothing at all ("The  has
-## appeared"), and asking for the "Game Boy" failed because the only thing she knew was `System`.
+## The log of a real session had their told "Cable / Node3D", "@RigidBody3D@4173" and, once, nothing at all ("The  has
+## appeared"), and asking for the "Game Boy" failed because the only thing they knew was `System`.
 extends SceneTree
 
 const W := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
@@ -64,12 +64,12 @@ func _view() -> void:
 	var o := Vector3.ZERO
 	var fwd := Vector3(0, 0, -1)
 	_check(W.in_view(o, fwd, Vector3(0, 0, -3)), "straight ahead is seen")
-	_check(W.in_view(o, fwd, Vector3(3, 0, -0.2)), "almost to her right is seen (within 90 degrees)")
-	_check(not W.in_view(o, fwd, Vector3(1, 0, 2)), "behind her is not")
-	_check(not W.in_view(o, fwd, Vector3(0, 0, 3)), "right behind her is not")
+	_check(W.in_view(o, fwd, Vector3(3, 0, -0.2)), "almost to their right is seen (within 90 degrees)")
+	_check(not W.in_view(o, fwd, Vector3(1, 0, 2)), "behind them is not")
+	_check(not W.in_view(o, fwd, Vector3(0, 0, 3)), "right behind them is not")
 	_check(W.in_view(o, fwd, Vector3(-2, 0, -2)), "ahead and to the left is")
 	_check(not W.in_view(o, fwd, Vector3(2, 0, 0.5), 120.0), "a narrower view leaves the side out")
-	_check(W.in_view(o, Vector3(1, 0, 0), Vector3(5, 0, 0.1)), "it follows where she faces")
+	_check(W.in_view(o, Vector3(1, 0, 0), Vector3(5, 0, 0.1)), "it follows where they face")
 
 
 func _match() -> void:

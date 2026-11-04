@@ -52,7 +52,7 @@ func _initialize() -> void:
 		_check(int(b["surfaces"]) >= 8, "%s: no surface was lost (%d)" % [skin, b["surfaces"]])
 		var face: RefCounted = puppet.face
 		for n: Array in [["blink"], ["joy", "happy"], ["a", "aa"]]:
-			_check(face.has_expression(n[0]) or face.has_expression(n[-1]), "%s: '%s' still moves her face" % [skin, n[0]])
+			_check(face.has_expression(n[0]) or face.has_expression(n[-1]), "%s: '%s' still moves their face" % [skin, n[0]])
 		_check(_blink_closes_the_lids(face), "%s: and blinking really sets a blend shape that exists" % skin)
 		puppet.queue_free()
 
@@ -102,7 +102,7 @@ func _initialize() -> void:
 	cut.close()
 	var third: Node3D = Puppet.new()
 	root.add_child(third)
-	_check(third.load_model(rei), "a truncated cache file does not stop her loading")
+	_check(third.load_model(rei), "a truncated cache file does not stop their loading")
 	_check(not bool(third.budget["from_cache"]) and BodyCache.stores == 2 and int(third.budget["tris"]) == int(first.budget["tris"]),
 		"it is made again and kept again (stores %d)" % BodyCache.stores)
 	# The cache holds the last three only.

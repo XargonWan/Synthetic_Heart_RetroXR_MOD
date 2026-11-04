@@ -141,14 +141,14 @@ func _view() -> void:
 	_check(placed.size() == 3, "what is past SEE_RADIUS is not seen")
 	_check(str(placed[0]["type"]) == "player", "nearest first")
 	var text := View.summoned_text("bedroom", placed)
-	_check(text.contains("summoned") and text.contains("'bedroom'"), "the text says she was summoned, and where")
+	_check(text.contains("summoned") and text.contains("'bedroom'"), "the text says they were summoned, and where")
 	_check(text.contains("The player is ahead and to the left"), "the player is placed (%s)" % text)
 	_check(text.contains("Crate") and not text.contains("TV, "), "what is in front is listed, what is behind is not")
 	_check(text.contains("Behind you there are 1 more things"), "and a line for what is behind")
 	var nobody := View.summoned_text("den", View.place([{"name": "Crate", "type": "Node3D", "position": Vector3(0, 0, -1)}], o, fwd))
-	_check(nobody.contains("cannot see the player"), "with no player she is told so")
+	_check(nobody.contains("cannot see the player"), "with no player they are told so")
 	var behind_player := View.summoned_text("den", View.place([{"name": "player", "type": "player", "position": Vector3(0, 1.5, 2)}], o, fwd))
-	_check(behind_player.contains("out of your sight"), "a player behind her is out of sight, not absent")
+	_check(behind_player.contains("out of your sight"), "a player behind them is out of sight, not absent")
 
 
 func _write(dir: String) -> void:

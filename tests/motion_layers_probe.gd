@@ -90,7 +90,7 @@ func _diff(a: Dictionary, b: Dictionary, parts: Array = []) -> float:
 # ── the loop window ──────────────────────────────────────────────────────────
 
 ## The biggest turn of any one bone between two poses, in degrees: what the eye catches. The mean over the bones
-## said 0.7 for a repeat that moved her head 4 (a held pose drifts), so the repeat is judged by this.
+## said 0.7 for a repeat that moved their head 4 (a held pose drifts), so the repeat is judged by this.
 func _worst(a: Dictionary, b: Dictionary) -> float:
 	var worst := 0.0
 	for bone: String in a:
@@ -187,9 +187,9 @@ func _crossfade() -> void:
 	var jump := _diff(before, first)
 	var mid_from := _diff(before, halfway)
 	var mid_to := _diff(halfway, done)
-	_check(jump < 2.0, "idle to walk: the first frame is where she was (%.2f deg/bone away)" % jump)
-	_check(mid_from > 3.0 and mid_to > 3.0, "halfway she is between the two (%.1f from idle, %.1f from walk)" % [mid_from, mid_to])
-	_check(_diff(before, done) > 8.0, "and then she walks (%.1f deg/bone from the idle)" % _diff(before, done))
+	_check(jump < 2.0, "idle to walk: the first frame is where they were (%.2f deg/bone away)" % jump)
+	_check(mid_from > 3.0 and mid_to > 3.0, "halfway they are between the two (%.1f from idle, %.1f from walk)" % [mid_from, mid_to])
+	_check(_diff(before, done) > 8.0, "and then they walk (%.1f deg/bone from the idle)" % _diff(before, done))
 
 	# Control: with no crossfade the same change is a cut.
 	var hard := _puppet({"idle": "idle/Idle2.fbx", "walk": "walk/Walking.fbx"})
@@ -202,7 +202,7 @@ func _crossfade() -> void:
 	var h_jump := _diff(h_before, _pose(hard))
 	_check(h_jump > 8.0 and h_jump > jump * 4.0, "control: with no crossfade it is a cut (%.1f deg/bone)" % h_jump)
 
-	# A change in the middle of a crossfade carries on from where she is, not from where she was.
+	# A change in the middle of a crossfade carries on from where they are, not from where they were.
 	puppet.play("idle")
 	_step(puppet)
 	puppet.play("walk")
@@ -221,7 +221,7 @@ func _layer() -> void:
 	var clips := {"idle": "idle/Idle2.fbx", "gaming": "gaming/Gaming-sitting.fbx", "sit": "sit/Sitting Idle.fbx"}
 	var puppet := _puppet(clips)
 	puppet.xfade_seconds = 0.0
-	_check(puppet.clip_mask("gaming") == "upper_body", "her skin says the gaming clip is for the upper body")
+	_check(puppet.clip_mask("gaming") == "upper_body", "their skin says the gaming clip is for the upper body")
 	puppet.play("idle")
 	_run(puppet, 1.0)
 	var idle_pose := _pose(puppet)
@@ -235,7 +235,7 @@ func _layer() -> void:
 	var arms_moved := _diff(idle_pose, layered, ["UpperArm", "LowerArm", "Hand", "Spine", "Chest"])
 	_check(arms_moved > 5.0, "the arms and the back do what the game clip says (%.1f deg/bone from standing)" % arms_moved)
 	_check(legs_moved < 3.0, "the legs go on doing what standing does (%.2f deg/bone)" % legs_moved)
-	_check(absf(puppet.skeleton.get_bone_pose_position(puppet._hips["t"]).y - hips_y) < 0.02, "and she does not sink as she would sitting (hips y unchanged)")
+	_check(absf(puppet.skeleton.get_bone_pose_position(puppet._hips["t"]).y - hips_y) < 0.02, "and they do not sink as they would sitting (hips y unchanged)")
 
 	# Control: the same clip as the BASE is a seated body and the legs go.
 	var base := _puppet(clips)
@@ -275,7 +275,7 @@ func _body() -> void:
 	floor_body.add_child(shape)
 	floor_body.position = Vector3(0, -0.5, 0)
 	add_child(floor_body)
-	var player := Camera3D.new()  # the player's head: what her gaze logic reads
+	var player := Camera3D.new()  # the player's head: what their gaze logic reads
 	player.position = Vector3(0, 1.5, 3.0)
 	add_child(player)
 	player.current = true
@@ -291,50 +291,50 @@ func _body() -> void:
 	body.attach_puppet(puppet)
 	await get_tree().process_frame
 
-	# Idle: now and then her head goes to something that is really in front of her (a machine that is on first),
-	# never while she speaks or is doing something she was asked.
+	# Idle: now and then their head goes to something that is really in front of them (a machine that is on first),
+	# never while they speak or are doing something they were asked.
 	body.sight = func() -> Array: return [{"name": "TV", "type": "TV", "position": Vector3(1.0, 1.0, -2.0), "powered": true, "distance": 2.2}]
 	body.idle_curiosity_on = false
 	body.routines._idle_clock = 0.0
 	body.routines.idle_curiosity(0.1, true)
-	_check(body.gaze_kind() == "", "she does not look about while she speaks (%s)" % body.gaze_kind())
+	_check(body.gaze_kind() == "", "they do not look about while they speak (%s)" % body.gaze_kind())
 	body.routines._idle_clock = 0.0
 	body.routines.idle_curiosity(0.1, false)
 	await get_tree().create_timer(0.9).timeout
-	_check(body.gaze_kind() == "point", "once it is time her head goes to what is there (%s)" % body.gaze_kind())
+	_check(body.gaze_kind() == "point", "once it is time their head goes to what is there (%s)" % body.gaze_kind())
 	body.sight = Callable()
 	body.set_karada_state("sit")
-	_check(puppet.playing() == "sit" and body.layer() == "", "sit: she sits (%s)" % puppet.playing())
+	_check(puppet.playing() == "sit" and body.layer() == "", "sit: they sit (%s)" % puppet.playing())
 	body.set_karada_state("crouch")
-	_check(puppet.playing() == "crouch", "crouch: she crouches (%s)" % puppet.playing())
+	_check(puppet.playing() == "crouch", "crouch: they crouch (%s)" % puppet.playing())
 	body.set_karada_state("idle")
-	_check(puppet.playing() == "crouch_post" and body.is_busy(), "out of a crouch she stands up first (%s)" % puppet.playing())
+	_check(puppet.playing() == "crouch_post" and body.is_busy(), "out of a crouch they stand up first (%s)" % puppet.playing())
 	puppet.clip_finished.emit("crouch_post")
 	_check(puppet.playing() == "idle" and not body.is_busy(), "and then stands (%s)" % puppet.playing())
 
 	body.set_karada_state("gaming")
 	_check(puppet.playing() == "idle" and body.layer() == "gaming" and puppet.overlay() == "gaming",
-			"gaming: she stands and her hands play (%s, layer %s)" % [puppet.playing(), body.layer()])
+			"gaming: they stand and their hands play (%s, layer %s)" % [puppet.playing(), body.layer()])
 	_walk_done = false
 	_walk(body)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	_check(puppet.playing() == "walk" and body.layer() == "gaming", "she walks and goes on playing (%s, layer %s)" % [puppet.playing(), body.layer()])
+	_check(puppet.playing() == "walk" and body.layer() == "gaming", "they walk and go on playing (%s, layer %s)" % [puppet.playing(), body.layer()])
 	while not _walk_done:
 		await get_tree().physics_frame
 	await get_tree().process_frame
-	_check(puppet.playing() == "idle" and body.layer() == "gaming", "she stops and still plays (%s, layer %s)" % [puppet.playing(), body.layer()])
+	_check(puppet.playing() == "idle" and body.layer() == "gaming", "they stop and still plays (%s, layer %s)" % [puppet.playing(), body.layer()])
 
 	_check(body.play_once("greet") and body.layer() == "", "a greeting is the whole body's: the layer comes off (%s)" % body.layer())
 	puppet.clip_finished.emit("greet")
 	_check(body.layer() == "gaming", "and goes back on afterwards (%s)" % body.layer())
 
 	body.set_presence("summon")
-	_check(body.layer() == "", "being summoned she does not play (%s)" % body.layer())
+	_check(body.layer() == "", "being summoned they do not play (%s)" % body.layer())
 	body.set_presence("idle")
-	_check(body.layer() == "gaming", "the summon ends and she plays (%s)" % body.layer())
+	_check(body.layer() == "gaming", "the summon ends and they play (%s)" % body.layer())
 	body.set_ethereal(true)
-	_check(body.layer() == "", "stepping out of the pod she does not play")
+	_check(body.layer() == "", "stepping out of the pod they do not play")
 	body.set_ethereal(false)
 	body.set_karada_state("think")
 	_check(body.layer() == "" and puppet.overlay() == "" and puppet.playing() == "think", "another state takes the layer off (%s)" % body.layer())

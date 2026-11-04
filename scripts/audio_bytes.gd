@@ -1,6 +1,6 @@
 ## AudioBytes -- the bytes of a clip Synth made, as an AudioStream Godot can play.
 ##
-## Her voice is a file on the server (Vox writes a .wav; other engines an .mp3 or .ogg) and the
+## Their voice is a file on the server (Vox writes a .wav; other engines an .mp3 or .ogg) and the
 ## mod has the bytes, not a path. Godot has no one call for that: an MP3 and an Ogg take their
 ## bytes directly, a WAV has to be read (RIFF chunks: the format, then the samples) and handed
 ## to an AudioStreamWAV. 8- and 16-bit PCM, mono or stereo. Anything else is null, never a crash.

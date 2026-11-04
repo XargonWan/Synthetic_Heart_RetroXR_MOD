@@ -4,7 +4,7 @@
 ## in the same order, so the body in the room has the face the avatar on the screen has.
 ##
 ##   1. face values  -- the server's emotion state (Karada `face` frames)
-##   2. descriptor   -- frame-windowed expressions of the animation that is playing (think closes her eyes)
+##   2. descriptor   -- frame-windowed expressions of the animation that is playing (think closes their eyes)
 ##   3. overlay      -- `vrm_expression_set` targets (one active source)
 ##   4. visemes      -- the mouth, last, so it wins over an emotion's mouth
 ##
@@ -23,7 +23,7 @@ const BLINK_MAX_INTERVAL := 6.0
 const BLINK_CLOSE := 0.08
 const BLINK_HOLD := 0.04
 const BLINK_OPEN := 0.1
-## The mouth opens no wider than this while she speaks (the WebUI's own cap).
+## The mouth opens no wider than this while they speak (the WebUI's own cap).
 const MOUTH_OPEN_CAP := 0.7
 const MOUTH_SMOOTHING := 0.35
 
@@ -38,6 +38,10 @@ var _binds: Dictionary = {}
 var _aliases: Dictionary = {}
 ## The skin's persona blendshape_map: logical name -> expression name; "visemes" -> {A: {name: scale}}.
 var blendshape_map: Dictionary = {}
+## The persona's `emotions`: an emotion name the server sends in a `face` frame -> the LOGICAL targets it is
+## (happy -> {mouth_smile: 0.25, eyes_smile: 0.2}), scaled by the value. A name that is not here is taken as a
+## VRM expression, as before.
+var emotions: Dictionary = {}
 
 var _face_values: Dictionary = {}
 var _overlay: Variant = null
@@ -226,7 +230,7 @@ func set_visemes(weights: Dictionary) -> void:
 	_visemes = weights
 
 
-## How open her mouth is, from how loud she is right now (0..1): smoothed and capped like the WebUI's.
+## How open their mouth is, from how loud they are right now (0..1): smoothed and capped like the WebUI's.
 func speak_level(level: float) -> void:
 	var target := minf(MOUTH_OPEN_CAP, sqrt(maxf(level, 0.0)) * 1.6)
 	_mouth += (target - _mouth) * MOUTH_SMOOTHING
@@ -242,7 +246,7 @@ func mouth_open() -> float:
 func update(delta: float) -> void:
 	var composed: Dictionary = {}
 	for name: String in _face_values:
-		_accumulate(composed, name, float(_face_values[name]))
+		_accumulate_emotion(composed, name, float(_face_values[name]))
 	for pair: Array in _descriptor_targets():
 		_accumulate(composed, str(pair[0]), float(pair[1]))
 	if _overlay is Dictionary:
@@ -269,6 +273,22 @@ func update(delta: float) -> void:
 			composed[{"A": "aa", "I": "ih", "U": "ou", "E": "ee", "O": "oh"}.get(letter, "aa")] = weight
 
 	_write(composed)
+
+
+## The server's EMOTION state: `happy 0.65` is the persona's soft smile at 65%, never the model's "happy" expression
+## at 65% (that one is the whole joy face: eyes shut, mouth wide open, which on top of `relaxed 0.5` was the dopey
+## grin they wore for as long as the server held the emotion). The legacy WebUI reads it the same way (its
+## `__synth_emotion_face_presets`). An emotion with several targets on one expression keeps the strongest.
+func _accumulate_emotion(composed: Dictionary, name: String, value: float) -> void:
+	var preset: Variant = emotions.get(name)
+	if not (preset is Dictionary):
+		_accumulate(composed, name, value)
+		return
+	for logical: String in (preset as Dictionary):
+		var mapped: Variant = blendshape_map.get(logical)
+		var key: String = str(mapped) if mapped is String else logical
+		var weight := float((preset as Dictionary)[logical]) * value
+		composed[key] = maxf(float(composed.get(key, 0.0)), weight)
 
 
 func _accumulate(composed: Dictionary, name: String, value: float) -> void:

@@ -13,8 +13,8 @@ extends Node
 
 const Protocol := preload("res://mods/xenu.synth_rift/scripts/rift_protocol.gd")
 const CACHE_DIR := "user://mods/xenu.synth_rift/cache"
-## A download is given up on when NO byte has arrived for this long (not when it has taken long: her model is 25 MB, and a
-## home server over wifi gave 85-250 KB/s, which a fixed 60 s total cut off every time and left her a blue capsule).
+## A download is given up on when NO byte has arrived for this long (not when it has taken long: their model is 25 MB, and a
+## home server over wifi gave 85-250 KB/s, which a fixed 60 s total cut off every time and left them a blue capsule).
 const STALL_SEC := 20.0
 ## Whatever happens, one request is over after this long.
 const MAX_SEC := 900.0
@@ -62,7 +62,7 @@ func get_bytes(url_path: String) -> PackedByteArray:
 	return got
 
 
-## The bytes of `url_path` straight from the server, never cached: her voice is a new clip every time.
+## The bytes of `url_path` straight from the server, never cached: their voice is a new clip every time.
 func get_fresh(url_path: String) -> PackedByteArray:
 	if base.is_empty() or url_path.is_empty():
 		return PackedByteArray()

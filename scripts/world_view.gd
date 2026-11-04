@@ -2,11 +2,11 @@
 ##
 ## Pure text and maths, so a test can read it. The generic prompt Synth is given (`Nearby entities: ...`) prints an
 ## entity's `name`, falling back to its `type`, and nothing else: a node called "System" or "@RigidBody3D@4173"
-## reaches her as exactly that, and an empty one as an empty line. So `name` here is the thing's NAME FOR A PERSON
+## reaches them as exactly that, and an empty one as an empty line. So `name` here is the thing's NAME FOR A PERSON
 ## ("Game Boy Color", "VHS tape 2", "unknown item"), unique in the room, and the node's own is kept as `id`.
 ##
-## What a person sees is what is in front of them (about 180 degrees) and not hidden: that is all she is told, and
-## she can turn, walk and look to be told more.
+## What a person sees is what is in front of them (about 180 degrees) and not hidden: that is all they are told, and
+## they can turn, walk and look to be told more.
 extends RefCounted
 
 ## The field of view of a person, in degrees, centred straight ahead.
@@ -82,7 +82,7 @@ static func label_of(raw: Dictionary) -> String:
 
 
 ## Give every entity its `name`/`label`: the label of `label_of`, numbered when several share one ("VHS tape 1",
-## "VHS tape 2"), in a stable order (by `id`, never by distance: she moves). `entities` entries carry `raw`.
+## "VHS tape 2"), in a stable order (by `id`, never by distance: they move). `entities` entries carry `raw`.
 static func name_all(entities: Array) -> void:
 	var by_label: Dictionary = {}
 	for e: Dictionary in entities:
@@ -105,13 +105,13 @@ static func in_view(origin: Vector3, forward: Vector3, target: Vector3, fov_deg:
 	var f := Vector2(forward.x, forward.z)
 	var d := Vector2(target.x - origin.x, target.z - origin.z)
 	if d.length() < 0.05:
-		return true  # on top of her
+		return true  # on top of them
 	if f.length() < 0.0001:
 		return false
 	return absf(rad_to_deg(f.normalized().angle_to(d.normalized()))) <= fov_deg * 0.5
 
 
-## Does what she asked for match this entity's name? Exact (case-folded) first, then a part of it ("vhs" ~ "VHS tape 2").
+## Does what they asked for match this entity's name? Exact (case-folded) first, then a part of it ("vhs" ~ "VHS tape 2").
 static func matches(entity: Dictionary, query: String) -> int:
 	var q := query.strip_edges().to_lower()
 	if q.is_empty():
