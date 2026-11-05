@@ -41,7 +41,7 @@ const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.18.0"
+const MOD_VERSION := "0.15.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -404,7 +404,6 @@ func _on_opened(welcome: Dictionary) -> void:
 	# think of a greeting, which is held (text and voice) until they step out, instead of the player waiting for it then.
 	_tell_synth_she_was_summoned()
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
-	RiftSettings.set_synth_name(str(assets.get("name", "")))
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
 	_set_status("Rift open: charging ...", false)
@@ -455,8 +454,6 @@ func _arrive() -> void:
 		return
 	_body.world_lookup = Callable(self, "_lookup_entity")
 	_body.sight = Callable(self, "_placed_entities")
-	_body.line_of_sight = Callable(self, "_line_of_sight_from")
-	_body.room_name = _room_id()
 	_body.picture_taker = Callable(self, "_take_picture")
 	_body.routine_done.connect(_on_routine_done)
 	_body.set_fetcher(_fetcher)
@@ -565,9 +562,7 @@ func _on_player_spoke(wav: PackedByteArray) -> void:
 		_body.heard(false, "", "stt_failed")
 		return
 	_clip_ids += 1
-	# _link is a Node (its methods are dynamic), so the result is a Variant: ':=' cannot infer it and the whole script
-	# fails to parse, which left the Rift Summoner unable to spawn (2026-11-05).
-	var sent: bool = _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
+	var sent := _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
 	print("[Rift] the player spoke: clip %d, %d bytes, sent=%s" % [_clip_ids, wav.size(), str(sent)])
 	if not sent:
 		_body.heard(false, "", "stt_failed")
