@@ -1139,7 +1139,11 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 		"look_at":
 			return _look_at(payload)
 		"inspect":
-			return _inspect(payload)
+			# Nothing by that name in their sight: say so at once. Else they go over to it, pick it up if they can and study it;
+			# what they find comes afterwards, as the routine's result.
+			if _resolve(payload).is_empty():
+				return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
+			return routines.start("inspect", payload)
 		"follow":
 			_follow = true
 			_follow_clock = 0.0
@@ -1268,6 +1272,12 @@ const LIFT_MAX_SIZE := 0.6
 
 var _held: Node3D = null
 var _held_name := ""
+## What they take travels to their hands, over `CARRY_FLIGHT_SECONDS` (eased, a little arc), instead of being there in a
+## fifth of a second: it used to snap across a metre of table. After that it follows their hands.
+const CARRY_FLIGHT_SECONDS := 0.55
+const CARRY_FLIGHT_ARC := 0.08
+var _carry_from := Vector3.ZERO
+var _carry_t := 1.0
 var _held_saved: Dictionary = {}
 
 
@@ -1332,6 +1342,8 @@ func hold(node: Node3D, label: String) -> bool:
 	rb.collision_mask = 0
 	_held = rb
 	_held_name = label
+	_carry_from = rb.global_position
+	_carry_t = 0.0
 	print("[Rift] they pick up %s" % label)
 	_refresh_anim()
 	return true
@@ -1362,6 +1374,11 @@ func _carry(delta: float) -> void:
 		_refresh_anim()
 		return
 	var want := hand_point()
+	if _carry_t < 1.0:
+		_carry_t = minf(1.0, _carry_t + delta / CARRY_FLIGHT_SECONDS)
+		var k := _carry_t * _carry_t * (3.0 - 2.0 * _carry_t)
+		_held.global_position = _carry_from.lerp(want, k) + Vector3.UP * (CARRY_FLIGHT_ARC * sin(PI * _carry_t))
+		return
 	_held.global_position = _held.global_position.lerp(want, minf(1.0, 12.0 * delta))
 
 
@@ -1525,32 +1542,6 @@ func _look_at(payload: Dictionary) -> Dictionary:
 	_face_point(hit["position"])
 	_study(hit)
 	return {"ok": true, "detail": "looking at %s" % str(hit.get("label", "it"))}
-
-
-## Turn to it and say what it is. Nothing about a screen's picture yet: that is not built.
-func _inspect(payload: Dictionary) -> Dictionary:
-	var hit := _resolve(payload)
-	if hit.is_empty():
-		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
-	var pos: Vector3 = hit["position"]
-	_face_point(pos)
-	_study(hit)
-	var bearing := SummonerView.bearing_deg(global_position, heading(), pos)
-	var dist := Vector2(pos.x - global_position.x, pos.z - global_position.z).length()
-	var bits: PackedStringArray = []
-	if str(hit.get("type", "")) == "player":
-		bits.append("a person")
-	else:
-		bits.append(str(hit.get("type", "something")))
-	if str(hit.get("systemid", "")) != "":
-		bits.append("a %s machine" % str(hit["systemid"]))
-	if hit.has("powered"):
-		bits.append("switched on" if bool(hit["powered"]) else "switched off")
-	var text := "%s: %s, %.1f m away, %s." % [str(hit.get("label", "it")), ", ".join(bits), dist,
-		SummonerView.side_words(bearing)]
-	print("[Rift] inspect: %s" % text)
-	return {"ok": true, "detail": text, "data": {"label": hit.get("label", ""), "type": hit.get("type", ""),
-		"distance": snappedf(dist, 0.1), "powered": hit.get("powered", null)}}
 
 
 func _look(payload: Dictionary) -> Dictionary:

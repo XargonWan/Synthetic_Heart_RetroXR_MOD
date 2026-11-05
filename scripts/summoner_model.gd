@@ -101,6 +101,9 @@ static func build(host: Node3D) -> Dictionary:
 	var lamp_nodes: Array[MeshInstance3D] = []
 	lamp_nodes.append(_part(host, "Lamp", _arc_shell(R_IN - 0.001 * SIZE, R_IN - 0.003 * SIZE, y0, y1, open, TAU - open, 64), null))
 	lamp_nodes.append(_part(host, "Pad", _cylinder(R_IN - 0.004 * SIZE, 0.006 * SIZE), null, Vector3(0, y0 + 0.003 * SIZE, 0)))
+	# And the ceiling. From below (a person crouching, a headset low in front of it) the underside of the hood shows through
+	# the opening: unlit, it was a black tongue hanging into the red wall (the photo from the headset, 2026-11-05).
+	lamp_nodes.append(_part(host, "Ceiling", _cylinder(R_IN - 0.004 * SIZE, 0.006 * SIZE), null, Vector3(0, y1 - 0.003 * SIZE, 0)))
 
 	# The screen, small, at chest height, on a bracket by the opening.
 	var screen_mat := StandardMaterial3D.new()
