@@ -20,10 +20,8 @@ const SEARCH_SECONDS := 50.0
 const WATCH_SECONDS := 10.0
 const WATCH_MAX := 30.0
 const WATCH_DISTANCE := 1.7
-const REACH := 0.5                   # how close they stand to take something (the walk stops up to 0.35 m short of it)
+const REACH := 0.75                  # how close they stand to take something
 const HOLD_OUT_SECONDS := 8.0        # how long they hold a thing out to the player
-const INSPECT_DISTANCE := 1.2        # how close they stand to a thing too big to lift, to look at it closely
-const INSPECT_SECONDS := 3.5         # how long they study it
 
 ## The SynthBody (untyped: it is a script of the mod and this one is loaded first).
 @warning_ignore("untyped_declaration")
@@ -70,8 +68,6 @@ func _started_text(kind: String, payload: Dictionary) -> String:
 			return "looking around the room: you will be told what you see"
 		"watch":
 			return "going to watch %s: you will be told what you saw" % (target if target != "" else "the TV")
-		"inspect":
-			return "going over to %s to look at it closely: you will be told what you find" % target
 		"pick_up":
 			return "going to pick up %s" % target
 		"hand_over":
@@ -113,8 +109,6 @@ func _run(kind: String, payload: Dictionary, mine: int) -> void:
 			await _explore(mine)
 		"watch":
 			await _watch(target if target != "" else "TV", float(payload.get("seconds", WATCH_SECONDS)), mine)
-		"inspect":
-			await _inspect(target, mine)
 		"pick_up":
 			await _pick_up(target, mine, true)
 		"hand_over":
@@ -291,40 +285,6 @@ func _explore(mine: int) -> void:
 		{"saw": names})
 
 
-## Turn on the spot for about `seconds`, naming what comes into view. Not a routine the model asked for: the core's walk
-## (plugins/rift_vessel/exploration.py) asks it at every stop, and uses the names. They are marked busy meanwhile, so the
-## idle glances keep out and a `stop` or a new walk ends it. {ok, data: {saw: [{name, area}]}}.
-func look_around(seconds: float) -> Dictionary:
-	if body == null:
-		return {"ok": false, "detail": "no_body"}
-	if running != "" and running != "look_around":
-		cancel("replaced by looking around")
-	_token += 1
-	var mine := _token
-	running = "look_around"
-	var collect: Dictionary = {}
-	seconds = clampf(seconds, 1.0, 10.0)
-	var steps := clampi(int(seconds / SCAN_STEP_SECONDS), 2, SCAN_STEPS)
-	var per := seconds / float(steps)
-	var yaw: float = body.rotation.y
-	var ok := true
-	for i in steps:
-		for e: Dictionary in _sight():
-			if str(e.get("type", "")) != "player":
-				collect[str(e.get("name", ""))] = true
-		yaw -= TAU / float(steps)
-		if not await _turn_to(yaw, mine, minf(per * 0.6, 0.45)) or not await _wait(per * 0.4, mine):
-			ok = false
-			break
-	if mine == _token:
-		running = ""
-	var saw: Array = []
-	for n: String in collect.keys():
-		if not n.is_empty():
-			saw.append({"name": n, "area": str(body.room_name)})
-	return {"ok": ok, "detail": "looked around" if ok else "stopped", "data": {"saw": saw}}
-
-
 func _watch(query: String, seconds: float, mine: int) -> void:
 	seconds = clampf(seconds, 3.0, WATCH_MAX)
 	var hit := await _acquire(query, mine, true, "watch")
@@ -352,69 +312,6 @@ func _watch(query: String, seconds: float, mine: int) -> void:
 		data["image_jpeg_b64"] = shot["jpeg_b64"]
 		text += " A picture of what they were looking at is attached."
 	_finish(mine, "watch", true, text, data)
-
-
-## Look at a thing closely, the way a person would: go over to it, take it in their hands if it can be lifted (a cartridge, a
-## console, a tape) and study it, or stand in front of it if it cannot (a TV, a wardrobe, a statue). They are told what it is
-## afterwards. What they picked up STAYS in their hands (the room shows them holding it; `put_down` / `hand_over` are theirs to
-## ask for). Going on to a second thing: if that one can be lifted too, the first is set down where they stand to take it; if
-## it cannot, they keep the first in their hands while they look at it.
-## It used to turn their head and read out a distance, which a model asked for over and over without anything ever happening.
-func _inspect(query: String, mine: int) -> void:
-	if query == "":
-		_finish(mine, "inspect", false, "You were not told what to look at.")
-		return
-	var hit: Dictionary = body.call("_resolve", {"target": query})
-	if hit.is_empty():
-		_finish(mine, "inspect", false, "There is nothing called '%s' that you can see. If you want to find it, search for it." % query)
-		return
-	var label := str(hit.get("label", hit.get("name", query)))
-	var p: Vector3 = hit["position"]
-	if str(hit.get("type", "")) == "player":
-		await _face(hit, mine)
-		_finish(mine, "inspect", true, "That is the player, %.1f m away." % Vector2(p.x - body.global_position.x, p.z - body.global_position.z).length())
-		return
-	var node: Node3D = hit.get("node") as Node3D
-	var refusal := "" if (node != null and is_instance_valid(node)) else "it is gone"
-	if refusal == "":
-		refusal = str(body.lift_refusal(node))
-	var already: bool = body.holding() != "" and body.holding() == str(hit.get("name", ""))
-	var liftable := refusal == "" and not already
-	if liftable and body.holding() != "":
-		var set_down: String = body.holding()
-		body.put_down()
-		print("[Rift] inspect: set %s down to take %s" % [set_down, label])
-	# Go over to it: close enough to take it, or a little way off when it stays where it is.
-	var stand := REACH if liftable else INSPECT_DISTANCE
-	var back := Vector3(body.global_position.x - p.x, 0.0, body.global_position.z - p.z)
-	if back.length() > stand + 0.2:
-		if not await _walk(p + back.normalized() * stand, mine):
-			if _cancelled(mine):
-				return
-			_finish(mine, "inspect", false, "You could not get up to %s." % label)
-			return
-	await _face(hit, mine)
-	if _cancelled(mine):
-		return
-	var taken := false
-	if liftable:
-		taken = body.hold(node, str(hit.get("name", label)))
-	if not await _wait(INSPECT_SECONDS, mine):
-		return
-	var bits: PackedStringArray = [str(hit.get("type", "something"))]
-	if str(hit.get("systemid", "")) != "":
-		bits.append("a %s machine" % str(hit["systemid"]))
-	if hit.has("powered"):
-		bits.append("switched on" if bool(hit["powered"]) else "switched off")
-	if str(hit.get("title", "")) != "":
-		bits.append("%s is on it" % str(hit["title"]))
-	var text := "You went over to %s and looked at it closely: %s." % [label, ", ".join(bits)]
-	if taken or already:
-		text += " You are holding it now (put it down or hand it over whenever you like)."
-	elif refusal != "":
-		text += " You left it where it is: %s." % refusal
-	_finish(mine, "inspect", true, text, {"name": hit.get("name", label), "label": label, "type": hit.get("type", ""),
-		"powered": hit.get("powered", null), "title": hit.get("title", ""), "holding": taken or already, "refusal": refusal})
 
 
 ## Walk up to a thing and take it. A FAILURE is always reported as the routine `kind`'s result: `bring` used to call this

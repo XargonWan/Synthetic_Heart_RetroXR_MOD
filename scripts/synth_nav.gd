@@ -18,9 +18,6 @@ const HEIGHT := 1.4
 const LIFT := 0.10
 ## Physics questions one search may ask.
 const MAX_QUERIES := 1800
-## A long walk with no leash (an exploration leg) is searched on the coarse grid, with more questions allowed.
-const FREE_MAX_QUERIES := 4000
-var max_queries := MAX_QUERIES
 ## Layers they collide with: the world, and the pickable things (a console, a box, a seat).
 const MASK := (1 << 0) | (1 << 2)
 
@@ -37,22 +34,6 @@ var leash := 6.0
 ## Places a walk already failed at: a cell near one is blocked, so a second try goes another way.
 var avoid: Array[Vector3] = []
 const AVOID_RADIUS := 0.4
-
-## Cell size: 0.2 for a walk; a survey of a whole room uses a coarser grid (`SURVEY_CELL`) to ask fewer questions.
-var cell_size := CELL
-const SURVEY_CELL := 0.4
-
-## Something to keep clear of that is not in the physics world's static shapes: the player (who moves), a thing rolling.
-## Each is {"pos": Vector3, "r": float}; a cell whose centre is inside one is blocked.
-var discs: Array = []
-
-## Without a leash a cell can be over the edge of the world: when set, a cell needs a floor within `STEP` of their feet
-## or it is blocked (a ledge, a stair down, a hole). Off for the old walks, which are leashed to a room they know.
-var check_ground := false
-const STEP := 0.3
-const GROUND_MASK := 1 << 0
-## Callable(Vector3 centre) -> bool (is there floor under it). Replaced by the tests; by default it asks `space`.
-var ground_fn: Callable = _physics_ground
 
 var queries := 0
 var _cache: Dictionary = {}
@@ -97,7 +78,7 @@ func plan(from: Vector3, to: Vector3) -> Dictionary:
 			best = cur
 			found = true
 			break
-		if queries >= max_queries:
+		if queries >= MAX_QUERIES:
 			cap_hit = true
 			break
 		for d: Vector2i in _DIRS:
@@ -135,7 +116,7 @@ func plan(from: Vector3, to: Vector3) -> Dictionary:
 ## Is there nothing in the way along a straight line? (Used to pull the path straight: the grid's own path zig-zags.)
 func clear_line(a: Vector3, b: Vector3) -> bool:
 	var flat := Vector3(b.x - a.x, 0.0, b.z - a.z)
-	var steps := maxi(1, int(ceil(flat.length() / (cell_size * 0.5))))
+	var steps := maxi(1, int(ceil(flat.length() / (CELL * 0.5))))
 	for i in range(1, steps + 1):
 		var p := a + flat * (float(i) / float(steps))
 		if _blocked(_cell_of(p)):
@@ -162,70 +143,6 @@ func _pulled(from: Vector3, points: PackedVector3Array) -> PackedVector3Array:
 	return out
 
 
-# ── what can be walked to: an incremental Dijkstra ───────────────────────────
-#
-# `plan` answers "is there a way to HERE". A survey asks the other question -- "where is there a way to" -- and a room is
-# a few thousand cells, so it is searched a few hundred physics questions at a time (`reach_step`, one call per frame)
-# and not in one frame. The cost of each cell is the length of the way to it, in metres.
-
-class ReachState:
-	var start := Vector2i.ZERO
-	var g: Dictionary = {}
-	var closed: Dictionary = {}
-	var hf: Array[float] = []
-	var hk: Array[Vector2i] = []
-	var done := false
-	var capped := false
-
-
-func reach_begin(from: Vector3) -> ReachState:
-	_cache.clear()
-	queries = 0
-	var st := ReachState.new()
-	st.start = _cell_of(from)
-	_cache[st.start] = false
-	st.g[st.start] = 0.0
-	_push(st.hf, st.hk, 0.0, st.start)
-	return st
-
-
-## Search until `budget` more physics questions have been asked, or `max_cells` cells are settled. True when done.
-func reach_step(st: ReachState, budget: int, max_cells: int) -> bool:
-	var q0 := queries
-	while not st.hk.is_empty():
-		if queries - q0 >= budget:
-			return false
-		var cur := _pop(st.hf, st.hk)
-		if st.closed.has(cur):
-			continue
-		st.closed[cur] = true
-		if st.closed.size() >= max_cells:
-			st.capped = true
-			st.done = true
-			return true
-		for d: Vector2i in _DIRS:
-			var nxt := cur + d
-			if st.closed.has(nxt) or not _in_bounds(nxt) or _blocked(nxt):
-				continue
-			var diagonal := d.x != 0 and d.y != 0
-			if diagonal and (_blocked(Vector2i(cur.x + d.x, cur.y)) or _blocked(Vector2i(cur.x, cur.y + d.y))):
-				continue
-			var ng: float = float(st.g[cur]) + (1.4142 if diagonal else 1.0)
-			if not st.g.has(nxt) or ng < float(st.g[nxt]):
-				st.g[nxt] = ng
-				_push(st.hf, st.hk, ng, nxt)
-	st.done = true
-	return true
-
-
-## {cell: metres of way} for every settled cell (the start included, at 0).
-func reach_cells(st: ReachState) -> Dictionary:
-	var out: Dictionary = {}
-	for c: Vector2i in st.closed.keys():
-		out[c] = float(st.g[c]) * cell_size
-	return out
-
-
 # ── the grid ─────────────────────────────────────────────────────────────────
 
 const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
@@ -233,21 +150,11 @@ const _DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1),
 
 
 func _cell_of(p: Vector3) -> Vector2i:
-	return Vector2i(roundi(p.x / cell_size), roundi(p.z / cell_size))
+	return Vector2i(roundi(p.x / CELL), roundi(p.z / CELL))
 
 
 func _centre_of(c: Vector2i) -> Vector3:
-	return Vector3(float(c.x) * cell_size, floor_y, float(c.y) * cell_size)
-
-
-## Where a cell is, for a caller that searched with `reach_*`.
-func centre_of(c: Vector2i) -> Vector3:
-	return _centre_of(c)
-
-
-## Where they stand is free by definition, whatever touches their margin: say so before asking about a line from here.
-func mark_free(p: Vector3) -> void:
-	_cache[_cell_of(p)] = false
+	return Vector3(float(c.x) * CELL, floor_y, float(c.y) * CELL)
 
 
 func _in_bounds(c: Vector2i) -> bool:
@@ -269,27 +176,10 @@ func _blocked(c: Vector2i) -> bool:
 		if Vector2(a.x - centre.x, a.z - centre.z).length() < AVOID_RADIUS:
 			_cache[c] = true
 			return true
-	for d: Dictionary in discs:
-		var dp: Vector3 = d["pos"]
-		if Vector2(dp.x - centre.x, dp.z - centre.z).length() < float(d["r"]):
-			_cache[c] = true
-			return true
 	queries += 1
 	var hit: bool = blocked_fn.call(centre)
-	if not hit and check_ground:
-		queries += 1
-		hit = not bool(ground_fn.call(centre))
 	_cache[c] = hit
 	return hit
-
-
-func _physics_ground(centre: Vector3) -> bool:
-	if space == null:
-		return true
-	var q := PhysicsRayQueryParameters3D.create(centre + Vector3(0.0, STEP + 0.05, 0.0), centre - Vector3(0.0, STEP + 0.05, 0.0))
-	q.collision_mask = GROUND_MASK
-	q.exclude = exclude
-	return not space.intersect_ray(q).is_empty()
 
 
 func _physics_blocked(centre: Vector3) -> bool:
