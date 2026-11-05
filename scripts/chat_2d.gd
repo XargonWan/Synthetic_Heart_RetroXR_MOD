@@ -10,7 +10,6 @@ signal close_requested
 ## The mic: first press starts listening, the next ends it and sends what was said.
 signal mic_pressed
 
-const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const COLOR_BG := Color(0.08, 0.08, 0.16, 0.96)
 const COLOR_YOU := "#9fb3ff"
 const COLOR_SYNTH := "#6effff"
@@ -20,8 +19,6 @@ var _log: RichTextLabel = null
 var _edit: LineEdit = null
 var _mic: Button = null
 var _lines: Array = []
-var _title: Label = null
-var _synth_name := RiftSettings.synth_name()
 
 
 func _ready() -> void:
@@ -30,9 +27,7 @@ func _ready() -> void:
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 8)
 	margin.add_child(root)
-	var title_row := MenuStyle.title_row(root, "Talk to %s" % _synth_name)
-	_title = title_row.get_child(0) as Label
-	MenuStyle.close_button(title_row, func() -> void: close_requested.emit())
+	MenuStyle.close_button(MenuStyle.title_row(root, "Talk to Synth"), func() -> void: close_requested.emit())
 	root.add_child(HSeparator.new())
 
 	_log = RichTextLabel.new()
@@ -48,7 +43,7 @@ func _ready() -> void:
 	row.add_theme_constant_override("separation", 8)
 	root.add_child(row)
 	_edit = LineEdit.new()
-	_edit.placeholder_text = _write_prompt()
+	_edit.placeholder_text = "Write to Synth and press Enter"
 	_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_edit.custom_minimum_size = Vector2(0, 42)
 	_edit.add_theme_font_size_override("font_size", 18)
@@ -69,23 +64,6 @@ func _ready() -> void:
 	_redraw()
 
 
-## What the server calls them: the title, the field's hint and the label on their lines.
-func set_synth_name(synth_name: String) -> void:
-	synth_name = synth_name.strip_edges()
-	if synth_name.is_empty() or synth_name == _synth_name:
-		return
-	_synth_name = synth_name
-	if _title != null:
-		_title.text = "Talk to %s" % _synth_name
-	if _edit != null and _edit.placeholder_text.begins_with("Write to"):
-		_edit.placeholder_text = _write_prompt()
-	_redraw()
-
-
-func _write_prompt() -> String:
-	return "Write to %s and press Enter" % _synth_name
-
-
 ## Replace what the page shows with `lines` ([{who, text}], oldest first).
 func show_lines(lines: Array) -> void:
 	_lines = lines.slice(maxi(lines.size() - MAX_LINES, 0))
@@ -102,7 +80,7 @@ func set_recording(on: bool) -> void:
 	if on:
 		_edit.placeholder_text = "Listening... press the red button when you are done"
 	else:
-		_edit.placeholder_text = _write_prompt()
+		_edit.placeholder_text = "Write to Synth and press Enter"
 
 
 func _redraw() -> void:
@@ -119,7 +97,7 @@ func _redraw() -> void:
 			continue
 		var mine := who == "you"
 		_log.append_text("[color=%s][b]%s[/b][/color]  %s\n" % [
-			COLOR_YOU if mine else COLOR_SYNTH, "You" if mine else _synth_name.replace("[", "[lb]"),
+			COLOR_YOU if mine else COLOR_SYNTH, "You" if mine else "Synth",
 			str(line.get("text", "")).replace("[", "[lb]")])
 
 

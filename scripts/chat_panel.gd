@@ -5,7 +5,6 @@
 ## keeps the log, this shows it and hands what is written back.
 extends FloatingObjectPanel3D
 
-const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const PANEL_SCENE := preload("res://mods/xenu.synth_rift/scenes/chat_panel.tscn")
 const NODE_NAME := "ChatPanel"
 ## UNDER them: low in front of their feet, toward the player, where a person looks down to read.
@@ -55,7 +54,6 @@ func _ensure_ui_connected() -> void:
 		call_deferred("_ensure_ui_connected")
 		return
 	ui.close_requested.connect(hide_panel)
-	ui.set_synth_name(RiftSettings.synth_name())
 	ui.message_sent.connect(func(text: String) -> void:
 		if is_instance_valid(_body):
 			_body.send_chat(text))
@@ -76,7 +74,6 @@ func _refresh() -> void:
 		call_deferred("_refresh")
 		return
 	if is_instance_valid(_body):
-		ui.set_synth_name(RiftSettings.synth_name())
 		ui.show_lines(_body.chat_lines())
 
 
