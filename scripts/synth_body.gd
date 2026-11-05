@@ -106,6 +106,19 @@ var _avoid: Array[Vector3] = []
 const WAYPOINT_REACHED := 0.25
 const MAX_REPLANS := 2
 var _stuck_for := 0.0
+## Turning on the spot with one of the skin's turn clips (`turn_left` / `turn_right`): a body that swivels to a new
+## heading without a step looks like a turret. `_turn_gained` is what the clip turns them by the time it is cut off
+## (radians, + = left), added to the heading when it ends, because the clip shows the turn through the hips only.
+const TURN_MIN_DEG := 40.0
+var _turning := false
+var _turn_left := 0.0
+var _turn_clip := ""
+var _turn_seconds := 0.0
+var _turn_gained := 0.0
+## The heading they are turning to (rotation.y), or NAN: what the standing body eases toward once a clip has done the bulk.
+var _face_goal := NAN
+## Set when a walk starts from standing: the first thing they do is turn to where they are going.
+var _turn_first := false
 var _stuck_sample := 0.0
 var _last_pos := Vector3.ZERO
 var _walk_elapsed := 0.0
@@ -221,14 +234,23 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
+	if _turning:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		move_and_slide()
+		_turn_left -= delta
+		if _turn_left <= 0.0:
+			_end_turn()
+		return
+
 	if _goal == null:
 		velocity.x = 0.0
 		velocity.z = 0.0
 		move_and_slide()
+		_ease_facing(delta)
 		_follow_the_player(delta)
 		return
 
-	_set_anim("walk")
 	var goal: Vector3 = _goal
 	var to_goal := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
 	_walk_elapsed += delta
@@ -248,6 +270,12 @@ func _physics_process(delta: float) -> void:
 			_end_walk(false, "no_way_round: got as near as %.1f m to it" % to_goal.length())
 			return
 	var dir := aim.normalized()
+	# From standing, the first thing is to turn to where they are going (a quarter turn or more takes a clip).
+	if _turn_first:
+		_turn_first = false
+		if begin_turn(atan2(-dir.x, -dir.z)):
+			return
+	_set_anim("walk")
 	velocity.x = dir.x * WALK_SPEED
 	velocity.z = dir.z * WALK_SPEED
 	rotation.y = lerp_angle(rotation.y, atan2(-dir.x, -dir.z), minf(1.0, 8.0 * delta))
@@ -368,6 +396,8 @@ func _follow_the_player(delta: float) -> void:
 
 ## Start walking to `dest`: the goal, and the way round things to it. False when there is no way at all.
 func _begin_walk(dest: Vector3) -> bool:
+	_turn_first = _goal == null and not _turning
+	_face_goal = NAN
 	_goal = dest
 	collision_mask = _body_mask()
 	_walk_elapsed = 0.0
@@ -540,6 +570,8 @@ func attach_puppet(puppet: Node3D) -> void:
 	_replay_face()
 	_bubble.position.y = float(puppet.get("height")) + 0.25
 	_one_shot = ""
+	_turning = false
+	_face_goal = NAN
 	_anim_state = ""
 	_refresh_anim()
 	if _ethereal:
@@ -606,7 +638,7 @@ func presence() -> String:
 ## they go back to it when the activity ends). `summon` is the state of being introduced into a rift: it is not a
 ## pose of its own (a skin may ship `animations/summon/`), it is the vessel saying "they are arriving".
 func is_busy() -> bool:
-	return _goal != null or _one_shot != "" or _ethereal or _presence == "summon"
+	return _goal != null or _one_shot != "" or _turning or _ethereal or _presence == "summon"
 
 
 ## The clip they rest in. Standing while busy; the state's clip (if their skin has it) when they are not.
@@ -650,7 +682,7 @@ func _refresh_anim() -> void:
 	if _puppet == null:
 		return
 	_set_layer(_wanted_layer())
-	if _goal != null or _one_shot != "":
+	if _goal != null or _one_shot != "" or _turning:
 		return
 	_set_anim(_base_anim())
 
@@ -864,6 +896,7 @@ func layer() -> String:
 func play_once(clip_name: String) -> bool:
 	if _puppet == null or not bool(_puppet.call("has_clip", clip_name)):
 		return false
+	_cancel_turn()
 	_one_shot = clip_name
 	_anim_state = ""
 	_set_layer("")
@@ -1185,7 +1218,91 @@ func _resolve(payload: Dictionary) -> Dictionary:
 func _face_point(p: Vector3) -> void:
 	var flat := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
 	if flat.length() > 0.01:
-		rotation.y = atan2(-flat.x, -flat.z)
+		face_yaw(atan2(-flat.x, -flat.z))
+
+
+## Turn to heading `yaw` (rotation.y). With a body to show it, in a step: a turn clip for a big turn and an ease for the
+## rest. Without one (a capsule, a suite) it is at once, as it always was. A walk in progress steers by itself.
+func face_yaw(yaw: float) -> void:
+	if _goal != null:
+		return
+	if _puppet == null:
+		rotation.y = yaw
+		return
+	_face_goal = yaw
+	if not _turning:
+		begin_turn(yaw)
+
+
+## Where they face, or will once the turn they are in is done.
+func heading() -> Vector3:
+	var yaw := rotation.y if is_nan(_face_goal) else _face_goal
+	return Vector3(-sin(yaw), 0.0, -cos(yaw))
+
+
+func is_turning() -> bool:
+	return _turning
+
+
+## Start turning on the spot to heading `yaw` with the skin's turn clip, as much of it as the turn needs. False (and
+## nothing done) when the turn is small, they are busy, or the skin has no such clip: the caller then eases or snaps.
+func begin_turn(yaw: float) -> bool:
+	if _puppet == null or _turning or _one_shot != "":
+		return false
+	var diff := wrapf(yaw - rotation.y, -PI, PI)
+	if absf(rad_to_deg(diff)) < TURN_MIN_DEG:
+		return false
+	var clip := "turn_left" if diff > 0.0 else "turn_right"
+	if not bool(_puppet.call("has_clip", clip)):
+		return false
+	var seconds := float(_puppet.call("clip_time_for_yaw", clip, absf(rad_to_deg(diff))))
+	if seconds < 0.2:
+		return false
+	_turn_gained = deg_to_rad(float(_puppet.call("clip_yaw", clip, seconds)))
+	_turn_left = seconds
+	_turn_seconds = seconds
+	_turn_clip = clip
+	_turning = true
+	_anim_state = "turn"
+	_puppet.call("play", clip, false)
+	print("[Rift] turn: %s for %.2f s to turn %.0f of the %.0f deg asked" % [clip, seconds, rad_to_deg(_turn_gained), rad_to_deg(diff)])
+	return true
+
+
+## The clip has turned them as far as it was asked to: the body takes the heading the hips showed and the pose goes on
+## from there (the hips give back what the body took, so nothing swings). A turn still owed starts the next clip.
+func _end_turn() -> void:
+	_turning = false
+	rotation.y += _turn_gained
+	if _puppet != null:
+		_puppet.call("shed_yaw", _turn_gained)
+	_turn_gained = 0.0
+	_anim_state = ""
+	if not is_nan(_face_goal) and _goal == null and begin_turn(_face_goal):
+		return
+	_refresh_anim()
+
+
+## Something else wants the body (a greeting): the turn stops where it is, the body keeping the heading the clip had reached.
+func _cancel_turn() -> void:
+	if not _turning:
+		return
+	_turn_gained = deg_to_rad(float(_puppet.call("clip_yaw", _turn_clip, _turn_seconds - maxf(_turn_left, 0.0))))
+	_turning = false
+	rotation.y += _turn_gained
+	_puppet.call("shed_yaw", _turn_gained)
+	_turn_gained = 0.0
+	_anim_state = ""
+
+
+## Standing: what is left of a turn after the clip, or a small one, is eased (about a third of a second).
+func _ease_facing(delta: float) -> void:
+	if is_nan(_face_goal):
+		return
+	rotation.y = lerp_angle(rotation.y, _face_goal, minf(1.0, 8.0 * delta))
+	if absf(wrapf(_face_goal - rotation.y, -PI, PI)) < deg_to_rad(0.5):
+		rotation.y = _face_goal
+		_face_goal = NAN
 
 
 ## Their head goes to what they are studying; the player looks at themselves.
@@ -1213,7 +1330,7 @@ func _inspect(payload: Dictionary) -> Dictionary:
 	var pos: Vector3 = hit["position"]
 	_face_point(pos)
 	_study(hit)
-	var bearing := SummonerView.bearing_deg(global_position, -global_basis.z, pos)
+	var bearing := SummonerView.bearing_deg(global_position, heading(), pos)
 	var dist := Vector2(pos.x - global_position.x, pos.z - global_position.z).length()
 	var bits: PackedStringArray = []
 	if str(hit.get("type", "")) == "player":
@@ -1237,17 +1354,17 @@ func _look(payload: Dictionary) -> Dictionary:
 		var p: Vector3 = point
 		var flat := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
 		if flat.length() > 0.01:
-			rotation.y = atan2(-flat.x, -flat.z)
+			face_yaw(atan2(-flat.x, -flat.z))
 			study_point(p)
 			return {"ok": true}
 	if payload.has("yaw"):
-		rotation.y = deg_to_rad(float(payload["yaw"]))
+		face_yaw(deg_to_rad(float(payload["yaw"])))
 		return {"ok": true}
 	if str(payload.get("target", "")) == "player":
 		var cam := get_viewport().get_camera_3d()
 		if cam != null:
 			var f := cam.global_position - global_position
-			rotation.y = atan2(-f.x, -f.z)
+			face_yaw(atan2(-f.x, -f.z))
 			attend_player(STUDY_SECONDS)
 			return {"ok": true}
 	return {"ok": false, "detail": "no_target"}

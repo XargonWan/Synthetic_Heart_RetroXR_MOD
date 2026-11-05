@@ -49,6 +49,9 @@ var _playing := ""
 var _after := ""
 var _lib := AnimationLibrary.new()
 var _clips: Dictionary = {}
+## Each clip's turn over time (`_yaw_curve`), made when first asked.
+var _yaw_curves: Dictionary = {}
+const YAW_SAMPLES_PER_SECOND := 30.0
 ## Each clip's descriptor from the skin (`.fbx.json`): its intro / loop / outro frames and its `mask`.
 var _descriptors: Dictionary = {}
 ## The window of the playing clip that repeats: {start, end} in seconds, or empty (the whole clip loops).
@@ -353,6 +356,7 @@ func add_clip(clip_name: String, fbx: PackedByteArray) -> bool:
 		scene.queue_free()
 	_lib.add_animation(clip_name, anim)
 	_clips[clip_name] = anim
+	_yaw_curves.erase(clip_name)
 	return true
 
 
@@ -410,6 +414,7 @@ func alias_clip(state: String, source: String) -> void:
 		_lib.remove_animation(state)
 	_lib.add_animation(state, _clips[source])
 	_clips[state] = _clips[source]
+	_yaw_curves.erase(state)
 	if _descriptors.has(source):
 		_descriptors[state] = _descriptors[source]
 	else:
@@ -418,6 +423,72 @@ func alias_clip(state: String, source: String) -> void:
 
 func has_clip(clip_name: String) -> bool:
 	return _clips.has(clip_name)
+
+
+## How far a clip turns the body, read from the animation's own Hips rotation: degrees about UP, positive to their LEFT,
+## one sample every 1/30 s, unwrapped (a turn past half a circle must not fold back). The clip turns them on screen
+## through its hips; what it cannot do is turn the BODY, so whoever plays a turn clip adds this to the body's heading
+## when it stops (`shed_yaw` for the pose). Empty for a clip with no hips track.
+func _yaw_curve(clip_name: String) -> PackedFloat32Array:
+	if _yaw_curves.has(clip_name):
+		return _yaw_curves[clip_name]
+	var curve := PackedFloat32Array()
+	var anim: Animation = _clips.get(clip_name)
+	if anim != null:
+		var track := -1
+		for t in anim.get_track_count():
+			if anim.track_get_type(t) == Animation.TYPE_ROTATION_3D and str(anim.track_get_path(t)).ends_with(_mx("Hips")):
+				track = t
+				break
+		if track >= 0 and anim.length > 0.0:
+			var q0: Quaternion = anim.rotation_track_interpolate(track, 0.0)
+			var prev := 0.0
+			for k in int(ceil(anim.length * YAW_SAMPLES_PER_SECOND)) + 1:
+				var q: Quaternion = anim.rotation_track_interpolate(track, minf(anim.length, float(k) / YAW_SAMPLES_PER_SECOND))
+				var fwd := Basis(q * q0.inverse()) * Vector3(0, 0, 1)
+				var yaw := rad_to_deg(atan2(fwd.x, fwd.z))
+				yaw += 360.0 * roundf((prev - yaw) / 360.0)
+				curve.append(yaw)
+				prev = yaw
+	_yaw_curves[clip_name] = curve
+	return curve
+
+
+## Degrees the clip has turned them (+ = left) after `seconds` of it. 0 for a clip that does not turn.
+func clip_yaw(clip_name: String, seconds: float) -> float:
+	var curve := _yaw_curve(clip_name)
+	if curve.is_empty():
+		return 0.0
+	var at := clampf(seconds * YAW_SAMPLES_PER_SECOND, 0.0, float(curve.size() - 1))
+	var i := mini(int(at), curve.size() - 2)
+	return lerpf(curve[maxi(i, 0)], curve[i + 1], at - float(i)) if curve.size() > 1 else curve[0]
+
+
+## The first moment the clip has turned them `degrees` (a size, either way round), or its length when it never does.
+func clip_time_for_yaw(clip_name: String, degrees: float) -> float:
+	var curve := _yaw_curve(clip_name)
+	for k in curve.size():
+		if absf(curve[k]) >= degrees:
+			var prev := absf(curve[k - 1]) if k > 0 else 0.0
+			var span := absf(curve[k]) - prev
+			var frac := (degrees - prev) / span if span > 0.0001 else 0.0
+			return (float(k - 1) + clampf(frac, 0.0, 1.0)) / YAW_SAMPLES_PER_SECOND if k > 0 else 0.0
+	return clip_length(clip_name)
+
+
+## The body has just been turned `radians` about UP (to their left) to make up for what a turn clip showed through the
+## hips: take that much off the pose the next clip melts in from, or the two add up and they swing round twice as far for
+## a third of a second.
+func shed_yaw(radians: float) -> void:
+	if _hips.is_empty() or not _last_local.has(_hips["t"]):
+		return
+	var t: int = _hips["t"]
+	var parent := skeleton.get_bone_parent(t)
+	var parent_pose := Quaternion.IDENTITY
+	if parent >= 0:
+		parent_pose = skeleton.get_bone_global_pose(parent).basis.get_rotation_quaternion()
+	var undo := Quaternion(Vector3.UP, -radians)
+	_last_local[t] = (parent_pose.inverse() * undo * parent_pose * (_last_local[t] as Quaternion)).normalized()
 
 
 ## Play a clip (looping). Unknown names are ignored, the model keeps what it was doing. A clip whose descriptor

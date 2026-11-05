@@ -65,6 +65,23 @@ func _initialize() -> void:
 		var i := src.find_bone(hand)
 		travelled = maxf(travelled, (src.get_bone_global_pose(i).origin - src.get_bone_global_rest(i).origin).length())
 	_check(travelled > 0.25, "the greeting moves a hand %.2f m from rest (else these numbers are rest against rest)" % travelled)
+	# The skin's turn clips turn them through the hips; the body has to add that much to its heading, so the numbers
+	# are what the animation itself does: a left turn is about half a circle to the left, a right one a quarter to the right.
+	_check(puppet.add_clip("turn_left", FileAccess.get_file_as_bytes(skin + "/animations/walk/turn_left/Left Turn.fbx")), "Left Turn loads")
+	_check(puppet.add_clip("turn_right", FileAccess.get_file_as_bytes(skin + "/animations/walk/turn_right/Right Turn.fbx")), "Right Turn loads")
+	var left_end: float = puppet.clip_yaw("turn_left", puppet.clip_length("turn_left"))
+	var right_end: float = puppet.clip_yaw("turn_right", puppet.clip_length("turn_right"))
+	_check(left_end > 150.0 and left_end < 200.0, "Left Turn turns them to the left, by about half a circle (%.0f deg)" % left_end)
+	_check(right_end < -75.0 and right_end > -105.0, "Right Turn turns them to the right, by about a quarter (%.0f deg)" % right_end)
+	_check(absf(puppet.clip_yaw("turn_left", 0.0)) < 1.0, "and neither has turned at its first frame")
+	var t90: float = puppet.clip_time_for_yaw("turn_left", 90.0)
+	_check(t90 > 0.3 and t90 < puppet.clip_length("turn_left") - 0.2 and absf(puppet.clip_yaw("turn_left", t90) - 90.0) < 3.0,
+		"a quarter turn to the left is cut off part of the way through its clip (%.2f s of %.2f, %.0f deg)" % [t90, puppet.clip_length("turn_left"), puppet.clip_yaw("turn_left", t90)])
+	_check(puppet.clip_time_for_yaw("turn_right", 170.0) == puppet.clip_length("turn_right"), "a turn the clip cannot make runs the whole clip")
+	_check(puppet.add_clip("walk", FileAccess.get_file_as_bytes(skin + "/animations/walk/walk/Walking.fbx")), "Walking loads")
+	# The hips sway a few degrees through a step; a walk ends facing the way it began.
+	_check(absf(puppet.clip_yaw("walk", puppet.clip_length("walk"))) < 5.0, "walking turns nobody (%.1f deg at its end)" % puppet.clip_yaw("walk", puppet.clip_length("walk")))
+	_check(puppet.clip_yaw("nothing_of_the_kind", 1.0) == 0.0, "a clip that is not there turns nobody")
 	# Two idles: the one that arches them back is not the one they stand in.
 	_check(puppet.add_clip("idle__0", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle.fbx")), "Idle loads")
 	_check(puppet.add_clip("idle__1", FileAccess.get_file_as_bytes(skin + "/animations/idle/Idle2.fbx")), "Idle2 loads")

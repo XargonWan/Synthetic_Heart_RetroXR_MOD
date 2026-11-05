@@ -19,7 +19,7 @@ const WORLD_VERBS: Array[String] = [
 	"search", "explore", "watch", "bring", "stop",
 ]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
-const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
+const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_right", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
 
 
 ## What this mod can really carry out. Synth is shown ONLY these (the hello says so): a verb they are

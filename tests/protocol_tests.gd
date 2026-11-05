@@ -25,6 +25,7 @@ func _init() -> void:
 	_room()
 	_resume()
 	_chat_memory()
+	_screen()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
@@ -259,3 +260,14 @@ func _chat_memory() -> void:
 		f.close()
 	else:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(ChatStore.FILE))
+
+
+func _screen() -> void:
+	_check("turn_left" in Protocol.WANTED_ANIMATIONS and "turn_right" in Protocol.WANTED_ANIMATIONS, "the hello asks for both turns")
+	_eq(View.body_screen(0), "BODY MATERIALIZATION\n[------------] 0%", "the body bar at nothing")
+	_eq(View.body_screen(50), "BODY MATERIALIZATION\n[######------] 50%", "at half")
+	_eq(View.body_screen(100), "BODY MATERIALIZATION\n[############] 100%", "and full")
+	_eq(View.body_screen(250), View.body_screen(100), "a percentage past a hundred is a hundred")
+	for pct in [0, 5, 40, 100]:
+		for line in View.body_screen(pct).split("\n"):
+			_check(line.length() <= 20, "no line of the screen is wider than the glass (%d chars at %d%%)" % [line.length(), pct])

@@ -190,3 +190,12 @@ static func room_changes(memory: Dictionary, placed: Array, first_look: bool = f
 
 static func _with_article(label: String) -> String:
 	return "The %s" % label
+
+
+## The pod's screen while their body comes down the wire: what it is, then a bar and the percentage. The line
+## is at most 20 characters, which is what the glass holds at the size the letters are.
+static func body_screen(pct: int) -> String:
+	pct = clampi(pct, 0, 100)
+	var cells := 12
+	var full := int(round(float(cells) * float(pct) / 100.0))
+	return "BODY MATERIALIZATION\n[%s%s] %d%%" % ["#".repeat(full), "-".repeat(cells - full), pct]

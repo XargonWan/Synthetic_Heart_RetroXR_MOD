@@ -151,6 +151,12 @@ func _find_in(seen: Array, query: String) -> Dictionary:
 
 ## Turn on the spot to `yaw` (radians), over a short time, so it is a turn and not a jump.
 func _turn_to(yaw: float, mine: int, seconds: float = 0.45) -> bool:
+	# A quarter turn or more is the skin's turn clip, as long as it takes; what is left (or a small turn) is the ease below.
+	while body.begin_turn(yaw):
+		while body.is_turning():
+			if _cancelled(mine):
+				return false
+			await get_tree().process_frame
 	var t := 0.0
 	var from: float = body.rotation.y
 	while t < seconds:

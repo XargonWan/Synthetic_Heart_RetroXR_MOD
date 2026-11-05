@@ -2,7 +2,7 @@
 ##
 ## Built in code from primitives (nothing downloaded, nothing to credit): a gunmetal
 ## cylinder open down its front like a booth, a hood over the opening, a glowing
-## floor pad, a ribbed strip up one side and three splayed feet. The inside glows in
+## floor pad, a ribbed strip up one side and a foot behind. The inside glows in
 ## the lamp colour (red off, amber waiting, green open), the colour the Summoner's
 ## status already uses, plus a beam that only stands while the rift is open.
 ##
@@ -42,6 +42,8 @@ const SCREEN_HEIGHT_ABOVE_FLOOR := 1.25
 ## right hand of a player standing in front of it.
 const SCREEN_AT_DEG := -72.0
 const SCREEN_TILT_DEG := 15.0
+## The words on the screen while nothing is going on: the red of the lamp, a little dimmer than the backlight.
+const LABEL_OFF := Color(1.0, 0.35, 0.28)
 
 
 ## The pod's front is +Z, like an arcade cabinet's: GroundPlacement turns +Z toward the player
@@ -77,13 +79,13 @@ static func build(host: Node3D) -> Dictionary:
 	# The base ring the feet hang from.
 	_part(host, "Base", _cylinder(0.088 * SIZE, 0.02 * SIZE), shell_mat, Vector3(0, BASE_Y - 0.01 * SIZE, 0))
 
-	# Three splayed feet, one behind and one to each front corner, canted outward.
-	for i in 3:
-		var a := deg_to_rad(180.0 + 120.0 * float(i))
-		var node := _part(host, "Foot%d" % i, _box(Vector3(0.05, 0.012, 0.075) * SIZE), shell_mat)
-		node.position = Vector3(sin(a) * 0.098 * SIZE, FLOOR_Y + 0.016 * SIZE, -cos(a) * 0.098 * SIZE)
-		node.rotation = Vector3(0, a, 0)
-		node.rotate_object_local(Vector3.RIGHT, deg_to_rad(-22.0))
+	# One foot, behind, canted outward. The two splayed ones at the front corners stuck out of the sides like stiff
+	# outriggers (and the Summoner is a thing carried and put down by its base: nothing there should catch).
+	var foot_angle := deg_to_rad(180.0)
+	var foot := _part(host, "Foot0", _box(Vector3(0.05, 0.012, 0.075) * SIZE), shell_mat)
+	foot.position = Vector3(sin(foot_angle) * 0.098 * SIZE, FLOOR_Y + 0.016 * SIZE, -cos(foot_angle) * 0.098 * SIZE)
+	foot.rotation = Vector3(0, foot_angle, 0)
+	foot.rotate_object_local(Vector3.RIGHT, deg_to_rad(-22.0))
 
 	# A ribbed strip up the back, like a scale (the flanks wear the logo).
 	var ribs := _part(host, "Ribs", _ribs(), trim_mat, Vector3.ZERO)
@@ -235,14 +237,27 @@ static func _screen_button(host: Node3D, bracket_mat: Material, screen_mat: Mate
 	box.size = Vector3(SCREEN_SIZE.x + 0.02, 0.03, SCREEN_SIZE.y + 0.02)
 	shape.shape = box
 	button.add_child(shape)
+	# A real display: a dark glass inset in the lit backlight (the cap, whose colour says the state: red off, cyan
+	# linking), scanlines over it, and the words in the state's colour. The letters are 0.8 cm high and rendered at
+	# 48 px, so they are crisp at arm's length and "BODY MATERIALIZATION" still fits on one line of the glass.
+	var glass := MeshInstance3D.new()
+	glass.name = "Glass"
+	var pane := PlaneMesh.new()   # a plane, not a box: its UV is the whole 0..1 the scanlines are drawn in
+	pane.size = Vector2(SCREEN_SIZE.x - 0.012, SCREEN_SIZE.y - 0.012)
+	glass.mesh = pane
+	glass.material_override = _glass_material()
+	glass.position = Vector3(0, 0.0032, 0)
+	button.add_child(glass)
 	var label := Label3D.new()
 	label.name = "Label"
 	label.text = "SUMMON"
-	label.font_size = 40
-	label.pixel_size = 0.0006
-	label.modulate = Color(0.06, 0.02, 0.02)
+	label.font_size = 48
+	label.pixel_size = 0.00017
+	label.line_spacing = -4.0
+	label.modulate = LABEL_OFF
 	label.shaded = false
 	label.double_sided = false
+	label.outline_size = 0
 	label.position = Vector3(0, 0.0045, 0)
 	# The text faces the screen's normal (the button's +Y) and its top points up in the world.
 	var local_up := basis.inverse() * Vector3.UP
@@ -250,6 +265,25 @@ static func _screen_button(host: Node3D, bracket_mat: Material, screen_mat: Mate
 	button.add_child(label)
 	host.add_child(button)
 	return button
+
+
+## The screen's glass: near-black blue, faint scanlines that crawl, the corners a little darker.
+static func _glass_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode unshaded, cull_disabled;
+void fragment() {
+	vec2 uv = UV;
+	float line = 0.5 + 0.5 * sin((uv.y * 36.0 - TIME * 0.6) * 6.2831853);
+	vec2 d = abs(uv - 0.5) * 2.0;
+	float vignette = 1.0 - 0.35 * pow(max(d.x, d.y), 3.0);
+	vec3 base = vec3(0.012, 0.035, 0.055) + vec3(0.0, 0.03, 0.04) * line * 0.5;
+	ALBEDO = base * vignette;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
 
 
 static func _part(host: Node3D, part_name: String, mesh: Mesh, mat: Material,

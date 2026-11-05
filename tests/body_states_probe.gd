@@ -30,7 +30,8 @@ func _ready() -> void:
 	add_child(puppet)
 	puppet.load_model(FileAccess.get_file_as_bytes(skin + "/model.vrm"))
 	for pair: Array in [["idle", "idle/Idle2.fbx"], ["greet", "greet/Standing Greeting.fbx"],
-			["think", "think/Thinking.fbx"], ["write", "write/Texting While Standing.fbx"], ["walk", "Texting And Walking.fbx"]]:
+			["think", "think/Thinking.fbx"], ["write", "write/Texting While Standing.fbx"], ["walk", "walk/walk/Walking.fbx"],
+			["turn_left", "walk/turn_left/Left Turn.fbx"], ["turn_right", "walk/turn_right/Right Turn.fbx"]]:
 		puppet.add_clip(pair[0], FileAccess.get_file_as_bytes(skin + "/animations/" + pair[1]))
 	body.attach_puppet(puppet)
 	await get_tree().process_frame
@@ -48,6 +49,10 @@ func _ready() -> void:
 	_walk_done = false
 	_walk(body)
 	await get_tree().physics_frame
+	await get_tree().physics_frame
+	# The goal is on their right, a quarter turn: the first thing is that turn (below), then the walking clip.
+	while body.is_turning():
+		await get_tree().physics_frame
 	await get_tree().physics_frame
 	_check(body.is_busy() and puppet.playing() == "walk", "they walk: the walking clip plays, not thinking (%s)" % puppet.playing())
 	body.set_karada_state("write")
@@ -96,6 +101,65 @@ func _ready() -> void:
 	_check(face.mouth_open() < 0.02, "and closes when they stop (%.2f)" % face.mouth_open())
 	_check(body.speech_pattern(0.0) >= 0.02 and body.speech_pattern(3.3) <= 0.3, "the pattern stays between a whisper and a normal voice")
 
+	# A turn is a clip, not a swivel: walking off behind them starts with the turn that side's, and the body ends up facing
+	# where it went. (Control: with no turn clips, rotation at once, which is what the capsule does.)
+	body.set_karada_state("idle")
+	await get_tree().physics_frame
+	body.global_position = Vector3.ZERO
+	body.rotation.y = 0.0   # facing -Z
+	_walk_done = false
+	body.act("move", {"x": -1.5, "y": 0.0, "z": 0.0})   # to their left side (-X is left of a body facing -Z)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(body.is_turning() and puppet.playing() == "turn_left", "a goal to the left: they turn left first (%s)" % puppet.playing())
+	var x_during := body.global_position.x
+	var turned_for := 0
+	while body.is_turning() and turned_for < 400:
+		await get_tree().physics_frame
+		turned_for += 1
+	_check(absf(body.global_position.x - x_during) < 0.05, "and do not walk while they turn (moved %.2f m)" % absf(body.global_position.x - x_during))
+	_check(absf(wrapf(body.rotation.y - deg_to_rad(90.0), -PI, PI)) < deg_to_rad(25.0), "the turn leaves the body facing its way (rotation %.0f deg)" % rad_to_deg(body.rotation.y))
+	await get_tree().physics_frame
+	_check(puppet.playing() == "walk", "then the walking clip plays (%s)" % puppet.playing())
+	await get_tree().create_timer(0.3).timeout
+	_check(body.global_position.x < x_during - 0.1, "and they walk to the left (x %.2f)" % body.global_position.x)
+	body._end_walk(false, "the probe ends it")
+	await get_tree().physics_frame
+	body.global_position = Vector3(0, 0, 0)
+	body.rotation.y = 0.0
+	body.face_yaw(deg_to_rad(-100.0))
+	await get_tree().physics_frame
+	_check(body.is_turning() and puppet.playing() == "turn_right", "a face turned away to the right plays the right turn (%s)" % puppet.playing())
+	while body.is_turning():
+		await get_tree().physics_frame
+	for i in 40:
+		await get_tree().physics_frame
+	_check(absf(wrapf(body.rotation.y + deg_to_rad(100.0), -PI, PI)) < deg_to_rad(2.0), "and settles exactly on the heading asked (%.1f deg)" % rad_to_deg(body.rotation.y))
+	_check(body.heading().dot(Vector3(-sin(deg_to_rad(-100.0)), 0, -cos(deg_to_rad(-100.0)))) > 0.999, "heading() says it")
+	# Seamless: the hips show the turn through the clip and the body takes it over when the clip is cut; the picture of the
+	# hips must not jump across that handover (without shed_yaw the crossfade starts a whole turn away).
+	body.global_position = Vector3(0, 0, 0)
+	body.rotation.y = 0.0
+	body.face_yaw(deg_to_rad(-90.0 - 5.0))
+	await get_tree().physics_frame
+	var hips_bone: int = puppet.skeleton.find_bone("J_Bip_C_Hips")
+	var last_yaw := NAN
+	var guard := 0
+	while body.is_turning() and guard < 400:
+		await get_tree().process_frame
+		if body.is_turning():   # a frame in which the body has not yet taken the turn over
+			last_yaw = _hips_yaw(body, puppet, hips_bone)
+		guard += 1
+	await get_tree().physics_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var jump := absf(wrapf(_hips_yaw(body, puppet, hips_bone) - last_yaw, -180.0, 180.0))
+	_check(jump < 25.0, "the picture of the hips does not jump when the body takes the turn over (%.0f deg)" % jump)
+
+	body.face_yaw(deg_to_rad(-90.0))
+	await get_tree().physics_frame
+	_check(not body.is_turning(), "a turn under the threshold is eased, not a clip (%.0f deg)" % rad_to_deg(wrapf(deg_to_rad(-90.0) - body.rotation.y, -PI, PI)))
+
 	print("[probe] done, %d cases, %d failed" % [_count, _failed])
 	get_tree().quit(1 if _failed > 0 else 0)
 
@@ -112,3 +176,10 @@ func _check(ok: bool, what: String) -> void:
 	else:
 		_failed += 1
 		print("[probe] FAIL: %s" % what)
+
+
+## Which way the hips face in the world, in degrees about UP.
+func _hips_yaw(body: Node3D, puppet: Node3D, bone: int) -> float:
+	var basis: Basis = body.global_basis * puppet.skeleton.get_bone_global_pose(bone).basis
+	var forward := basis * Vector3(0, 0, 1)
+	return rad_to_deg(atan2(forward.x, forward.z))

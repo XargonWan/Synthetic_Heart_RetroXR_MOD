@@ -142,7 +142,7 @@ func _ready() -> void:
 	_check(not _summoner.is_on(), "a Summoner starts OFF")
 	_check(_summoner.status_text() == "Off", "it says Off")
 	_check(_screen_is_red(), "the screen is red while idle")
-	_check(_summoner._screen_label.text == "SUMMON", "the screen says SUMMON")
+	_check(_summoner._screen_label.text.ends_with("TOUCH TO SUMMON"), "the screen says touch to summon")
 	_check_screen_size_and_height()
 	await _check_handling()
 	_menu_then_open()
@@ -302,7 +302,7 @@ func _menu_then_open() -> void:
 	_check(_summoner.phase() == 1, "it is CHARGING")
 	await get_tree().process_frame
 	_check(_screen_is_cyan(), "the screen turns Synth cyan")
-	_check(_summoner._screen_label.text == "LINKING", "and says LINKING")
+	_check(_summoner._screen_label.text.contains("LINKING"), "and says LINKING")
 	_check(_summoner._beam.visible, "the beam is up")
 	_check(_summoner._sfx.stream == Sounds.stream("rise") and _summoner._sfx.playing, "the charge sound is playing")
 	_check(ui._status.text.begins_with("Connecting"), "the menu says it is connecting")
@@ -326,7 +326,7 @@ func _process(delta: float) -> void:
 			_check("password" in _menu_ui._status.text, "the menu says it could not reach Synth, and that a password is only if it has one (got '%s')" % _menu_ui._status.text)
 			_check(_summoner.get_parent().get_node_or_null("SynthBody") == null, "no body for a refused rift")
 			_check(_screen_is_red(), "the screen is red again")
-			_check(_summoner._screen_label.text == "FAILED", "and says FAILED")
+			_check(_summoner._screen_label.text.contains("FAULT"), "and says FAULT")
 			_check(_summoner._sfx.stream == Sounds.stream("fizzle"), "the rift fizzles")
 			_finish("refused as expected: %s" % _menu_ui._status.text)
 		elif _t > 30.0:
@@ -400,14 +400,14 @@ func _process(delta: float) -> void:
 	if _summoner.phase() == 2 and not _checked_arriving:
 		_checked_arriving = true
 		_check(_summoner._sfx.stream == Sounds.stream("arrive"), "the arrival sound plays")
-		_check(_summoner._screen_label.text == "ARRIVING", "the screen says ARRIVING")
+		_check(_summoner._screen_label.text.contains("ARRIVING"), "the screen says ARRIVING")
 	if _summoner._lamp_nodes.size() > 0:
 		if _screen_is_cyan() and (_summoner._light_mat.albedo_color.g > 0.9):
 			_saw_cyan = true
 	if _menu_ui != null and not _saw_open_text and _menu_ui._status.text.begins_with("Open"):
 		_saw_open_text = true
 		_check(_menu_ui._power.text == "Close the rift", "the button offers to close it")
-		_check(_summoner._screen_label.text == "ONLINE", "the screen says ONLINE")
+		_check(_summoner._screen_label.text.contains("ONLINE"), "the screen says ONLINE")
 		_check(body != null and _flat_distance(body, _summoner) > 0.9,
 			"they have stepped out of the capsule (%.2f m)" % _flat_distance(body, _summoner))
 		_check(_summoner.phase() == 3, "it is OPEN")
@@ -449,7 +449,7 @@ func _process(delta: float) -> void:
 			_check(_summoner.get_parent().get_node_or_null("SynthBody") == null or
 				_summoner.get_parent().get_node("SynthBody").is_queued_for_deletion(), "the body is gone")
 			_check(_screen_is_red(), "the screen is red again")
-			_check(_summoner._screen_label.text == "SUMMON", "and says SUMMON")
+			_check(_summoner._screen_label.text.ends_with("TOUCH TO SUMMON"), "and says touch to summon")
 			_check(_summoner.status_text() == "Off", "the menu says Off")
 			_check(_saw_cyan and _saw_open_text, "it was cyan and open on the way")
 			_finish("dismissed")

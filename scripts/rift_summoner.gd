@@ -41,7 +41,7 @@ const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.14.1"
+const MOD_VERSION := "0.15.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -384,7 +384,7 @@ func _on_download_progress(url_path: String, got: int, total: int) -> void:
 	var pct := int(100.0 * float(got) / float(total))
 	_set_status("Rift open: loading Synth's body ... %d%% (%.0f of %.0f MB)" % [pct, got / 1048576.0, total / 1048576.0], false)
 	if pct % 5 == 0:
-		_screen_text("BODY %d%%" % pct)
+		_screen_text(SummonerView.body_screen(pct))
 
 
 func _on_opened(welcome: Dictionary) -> void:
@@ -447,7 +447,7 @@ func _arrive() -> void:
 	_stop(_hum)
 	_play(_sfx, "arrive")
 	_set_status("Synth is arriving ...", false)
-	_screen_text("ARRIVING")
+	_screen_text("RIFT // STABLE\nSYNTH ARRIVING")
 	_flash()
 	if not _spawn_body():
 		_abort("no_body", true)
@@ -494,7 +494,7 @@ func _arrive() -> void:
 	_beam.scale = Vector3.ONE
 	_set_phase(Phase.OPEN)
 	_set_status("Open: Synth is in the room. Point at them and press Tab to talk.", true)
-	_screen_text("ONLINE")
+	_screen_text("RIFT // OPEN\nSYNTH ONLINE")
 	_link.send_frame({"type": "out"})   # out of the capsule: the introduction is over (the first prompt went at the welcome)
 	_release_speech()
 
@@ -603,7 +603,7 @@ func _dismiss() -> void:
 		return
 	_set_phase(Phase.LEAVING)
 	_set_status("Sending Synth back ...", false)
-	_screen_text("LEAVING")
+	_screen_text("RIFT // CLOSING\nSYNTH DEPARTING")
 	_play(_sfx, "leave")
 	if _body != null and is_instance_valid(_body):
 		_body.set_ethereal(true)   # into the pod: it is not shoved aside on the way in
@@ -669,7 +669,7 @@ func _abort(reason: String, with_sound: bool) -> void:
 	_set_status("Off" if reason == "switched_off" else _reason_text(reason), false)
 	_show_idle()
 	if reason != "switched_off":
-		_screen_text("FAILED")
+		_screen_text("RIFT // FAULT\nLINK FAILED")
 
 
 func _on_closed(reason: String) -> void:
@@ -686,7 +686,7 @@ func _on_closed(reason: String) -> void:
 	_set_phase(Phase.IDLE)
 	_set_status(_reason_text(reason), false)
 	_show_idle()
-	_screen_text("FAILED")
+	_screen_text("RIFT // FAULT\nLINK FAILED")
 
 
 ## What the player is told when the rift shuts, in words rather than codes.
@@ -1148,7 +1148,8 @@ func _show_idle() -> void:
 	_set_light(LIGHT_OFF)
 	_light_mat.emission_energy_multiplier = 1.0
 	_screen_mat.albedo_color = LIGHT_OFF
-	_screen_text("SUMMON")
+	_screen_label.modulate = SummonerModel.LABEL_OFF
+	_screen_text("RIFT // STANDBY\nTOUCH TO SUMMON")
 	_beam.visible = false
 	_beam.scale = Vector3.ONE
 
@@ -1156,7 +1157,8 @@ func _show_idle() -> void:
 func _show_charging() -> void:
 	_set_light(LIGHT_CYAN)
 	_screen_mat.albedo_color = LIGHT_CYAN
-	_screen_text("LINKING")
+	_screen_label.modulate = LIGHT_CYAN
+	_screen_text("RIFT // LINKING\nOPENING CHANNEL")
 	_beam.visible = true
 	_beam.scale = Vector3(0.3, 1.0, 0.3)
 	_beam_mat.albedo_color.a = 0.12
