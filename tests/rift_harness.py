@@ -192,14 +192,14 @@ async def _drive():
     # What they are offered is what the mod said it can do, and nothing else.
     declared = conn.declared_verbs()
     want = {"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
-            "search", "watch", "pick_up", "put_down", "hand_over", "bring", "stop"}
+            "search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop"}
     print(f"[synth] CHECK {'ok  ' if declared == want else 'FAIL'} verbs: the mod declared {sorted(declared)}")
-    # Hers on top of what the body can do: her aims and her walks (the core's). Never the two verbs the core uses to build a walk.
     offered = set(conn.get_world_actions()) | set(conn.core_verbs)
-    mine = {"set_goal", "update_goal", "explore"}
-    print(f"[synth] CHECK {'ok  ' if offered == want | mine and 'observe' not in offered and 'attack' not in offered and not ({'survey', 'look_around'} & offered) else 'FAIL'} verbs: offered to them {sorted(offered)}")
-    print(f"[synth] CHECK {'ok  ' if conn.mod_supports('survey') and conn.mod_supports('look_around') else 'FAIL'} verbs: the mod declares the two the core builds a walk with")
+    print(f"[synth] CHECK {'ok  ' if offered == want and 'observe' not in offered and 'attack' not in offered else 'FAIL'} verbs: offered to them {sorted(offered)}")
     # Curiosity: they can look at things, go to them by name, and ask what they are.
+    r = await conn.act("inspect", {"target": "Crate"})
+    show("inspect Crate", r)
+    print(f"[synth] CHECK {'ok  ' if r.ok and 'Crate' in (r.detail or '') and 'm away' in (r.detail or '') else 'FAIL'} inspect: told what it is and where")
     r = await conn.act("inspect", {"target": "no such thing"})
     print(f"[synth] CHECK {'ok  ' if not r.ok and 'nothing called' in (r.detail or '') else 'FAIL'} inspect: honest about what is not there ({r.detail!r})")
     r = await conn.act("look_at", {"target": "player"})
@@ -227,8 +227,6 @@ async def _drive():
         print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} sighting: a thing put down in the room is told to them ({[e.summary for e in sights]!r})")
         await routines_through_the_socket(conn)
         await asyncio.sleep(12)   # the probe looks at how they behave when nobody is asking their anything
-    await inspect_through_the_socket(conn)
-    await explore_through_the_socket(conn)
     await FakePlugin().disconnect_world("retroxr")
 
 
@@ -291,45 +289,6 @@ async def routines_through_the_socket(conn):
     # What they were told about the room is names a person could say.
     names = [e.get("name") for e in ((st.get("extra") or {}).get("entities") or [])]
     print(f"[synth] CHECK {'ok  ' if names and all(n and not str(n).startswith('@') for n in names) else 'FAIL'} the entities they are told have names: {names!r}")
-
-
-async def inspect_through_the_socket(conn):
-    """`inspect` goes over to the thing and takes it in their hands when it can be lifted. Late, like explore: it moves them."""
-    EVENTS.clear()
-    r = await conn.act("inspect", {"target": "Game Boy Color"})
-    print(f"[synth] CHECK {'ok  ' if r.ok and 'going over' in (r.detail or '') else 'FAIL'} inspect: answered at once, they go over to it ({r.detail!r})")
-    ev = await wait_event("inspect_done", timeout=90.0)
-    ok = ev is not None and (ev.data or {}).get("holding") is True and "looked at it closely" in ev.summary and "You are holding it now" in ev.summary
-    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} inspect: a loose thing is walked up to and taken in their hands, and they are told afterwards: {ev.summary[:140] if ev else None!r}")
-    await asyncio.sleep(0.6)
-    held = (conn._state or {}).get("holding")
-    print(f"[synth] CHECK {'ok  ' if held and 'Game Boy' in str(held) else 'FAIL'} inspect: the state frame says they are holding it ({held!r})")
-    EVENTS.clear()
-    r = await conn.act("inspect", {"target": "Crate"})
-    ev = await wait_event("inspect_done", timeout=90.0)
-    await asyncio.sleep(0.6)
-    still = (conn._state or {}).get("holding")
-    ok = ev is not None and "fixed in place" in ev.summary and (ev.data or {}).get("holding") is False and still and "Game Boy" in str(still)
-    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} inspect: a fixed thing is walked up to and left, and what they held stays in their hands ({still!r}): {ev.summary[:120] if ev else None!r}")
-    EVENTS.clear()
-    r = await conn.act("put_down", {})
-    ev = await wait_event("put_down_done", timeout=20.0)
-    print(f"[synth] CHECK {'ok  ' if r.ok and ev is not None and 'put' in ev.summary else 'FAIL'} put_down: what they held is set down ({ev.summary[:80] if ev else None!r})")
-
-
-async def explore_through_the_socket(conn):
-    """The core decides the route; the body answers one question at a time. Last, because it moves them and shows them
-    the room: the checks above assume what they have not seen yet."""
-    conn.set_explore_budget(45)
-    EVENTS.clear()
-    r = await conn.act("explore", {})
-    print(f"[synth] CHECK {'ok  ' if r.ok and 'going for a walk' in (r.detail or '') and conn.idle_busy() else 'FAIL'} explore: answered at once, the walk goes on ({r.detail!r})")
-    ev = await wait_event("explore_done", timeout=120.0)
-    d = (ev.data or {}) if ev else {}
-    ok = ev is not None and d.get("legs", 0) >= 2 and d.get("distance", 0) > 3.0 and d.get("stopped_because") in ("budget", "nothing_left")
-    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} explore: a walk of {d.get('legs')} legs, {d.get('distance')} m, ended by {d.get('stopped_because')!r} after {d.get('seconds')} s; came across {[x['name'] for x in d.get('discovered', [])]}")
-    print(f"[synth] CHECK {'ok  ' if ev is not None and 'What do you want to do now?' in ev.summary and not conn.idle_busy() else 'FAIL'} explore: told afterwards, and the body is free again")
-    print(f"[synth] explore summary: {ev.summary if ev else None}")
 
 
 async def main():

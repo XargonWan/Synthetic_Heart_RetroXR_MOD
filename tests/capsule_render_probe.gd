@@ -43,29 +43,6 @@ func _ready() -> void:
 	sun.rotation_degrees = Vector3(-50, -35, 0)
 	sun.light_energy = 1.1
 	add_child(sun)
-	if not OS.get_environment("DARK").is_empty():
-		# A dim room like the one in a headset: no sun, almost no ambient, one weak lamp, two walls in a corner behind.
-		sun.visible = false
-		e.ambient_light_energy = 0.03
-		e.background_color = Color(0.02, 0.02, 0.025)
-		e.glow_enabled = false
-		gm.albedo_color = Color(0.12, 0.05, 0.05)
-		var lamp := OmniLight3D.new()
-		lamp.position = Vector3(1.8, 2.3, 1.8)
-		lamp.light_energy = 0.7
-		lamp.omni_range = 7.0
-		lamp.shadow_enabled = true
-		add_child(lamp)
-		for wall: Vector3 in [Vector3(0, 1.2, -0.7), Vector3(-0.7, 1.2, 0)]:
-			var w := MeshInstance3D.new()
-			var bm := BoxMesh.new()
-			bm.size = Vector3(4.0, 2.4, 0.1) if wall.z != 0.0 else Vector3(0.1, 2.4, 4.0)
-			w.mesh = bm
-			var wmat := StandardMaterial3D.new()
-			wmat.albedo_color = Color(0.2, 0.2, 0.22)
-			w.material_override = wmat
-			w.position = wall
-			add_child(w)
 
 	_summoner = (load(SCENE) as PackedScene).instantiate()
 	add_child(_summoner)
@@ -78,11 +55,6 @@ func _ready() -> void:
 	_cam.current = true
 
 	var mid := Vector3(0, 1.0, 0)
-	# From where a person standing near it looks (the photo of the artefact in a headset): low, close, a little to the side.
-	await _shoot(out, "0_user_view", Vector3(0.45, 1.0, 1.7), Vector3(0, 1.05, 0))
-	await _shoot(out, "0b_user_view_closer", Vector3(0.25, 1.2, 1.1), Vector3(0, 1.1, 0))
-	# From low, looking up into it: the hood's underside shows through the opening (it was a black tongue, unlit).
-	await _shoot(out, "0c_from_low", Vector3(0.3, 0.55, 1.5), Vector3(0, 1.3, 0))
 	# The pod's front is +Z, so the player stands on that side.
 	await _shoot(out, "1_idle_front", Vector3(1.8, 1.6, 4.2), mid)
 	# The flanks wear the logo, the back the ribs.
