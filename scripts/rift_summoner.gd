@@ -41,7 +41,7 @@ const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.14.0"
+const MOD_VERSION := "0.14.1"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -562,8 +562,10 @@ func _on_player_spoke(wav: PackedByteArray) -> void:
 		_body.heard(false, "", "stt_failed")
 		return
 	_clip_ids += 1
-	_link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
-	print("[Rift] the player spoke: clip %d, %d bytes" % [_clip_ids, wav.size()])
+	var sent := _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
+	print("[Rift] the player spoke: clip %d, %d bytes, sent=%s" % [_clip_ids, wav.size(), str(sent)])
+	if not sent:
+		_body.heard(false, "", "stt_failed")
 
 
 func _on_transcript(id: int, ok: bool, text: String, reason: String) -> void:

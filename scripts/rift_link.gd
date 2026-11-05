@@ -38,6 +38,7 @@ var _hello: Dictionary = {}
 var _waited := 0.0
 var _draining: Array = []
 const DRAIN_SECONDS := 2.0
+const OUTBOUND_BUFFER_BYTES := 4 * 1024 * 1024
 
 
 func is_open() -> bool:
@@ -54,6 +55,10 @@ func open_rift(url: String, hello: Dictionary) -> bool:
 		closed.emit("no_server")
 		return false
 	_peer = WebSocketPeer.new()
+	# The default outbound buffer is 64 KiB, and a spoken clip is base64 text: a couple of seconds already
+	# overflowed it, `send_text` answered ERR_OUT_OF_MEMORY and the clip was dropped without a word (2026-11-05).
+	# Must be set before connecting. 4 MiB holds the longest recording (VoiceRecorder.MAX_SECONDS) with room.
+	_peer.outbound_buffer_size = OUTBOUND_BUFFER_BYTES
 	# A Synth on this machine or network serves a self-signed certificate, which Godot refuses
 	# unless told otherwise. Only for those: a public host is verified as ever.
 	var tls: TLSOptions = null
@@ -92,7 +97,11 @@ func close_rift(reason: String = "closed", goodbye: bool = false) -> void:
 func send_frame(frame: Dictionary) -> bool:
 	if _peer == null or _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return false
-	return _peer.send_text(JSON.stringify(frame)) == OK
+	var text := JSON.stringify(frame)
+	var err := _peer.send_text(text)
+	if err != OK:
+		print("[Rift] could not send a '%s' frame (%d bytes): %s" % [str(frame.get("type", "?")), text.length(), error_string(err)])
+	return err == OK
 
 
 func _process(delta: float) -> void:
