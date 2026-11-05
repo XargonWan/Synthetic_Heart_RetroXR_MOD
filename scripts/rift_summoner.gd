@@ -562,7 +562,9 @@ func _on_player_spoke(wav: PackedByteArray) -> void:
 		_body.heard(false, "", "stt_failed")
 		return
 	_clip_ids += 1
-	var sent := _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
+	# _link is a Node (its methods are dynamic), so the result is a Variant: ':=' cannot infer it and the whole script
+	# fails to parse, which left the Rift Summoner unable to spawn (2026-11-05).
+	var sent: bool = _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
 	print("[Rift] the player spoke: clip %d, %d bytes, sent=%s" % [_clip_ids, wav.size(), str(sent)])
 	if not sent:
 		_body.heard(false, "", "stt_failed")
