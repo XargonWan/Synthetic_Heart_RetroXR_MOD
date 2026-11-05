@@ -41,7 +41,7 @@ const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.17.0"
+const MOD_VERSION := "0.18.0"
 const STATE_INTERVAL := 1.0
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
@@ -404,6 +404,7 @@ func _on_opened(welcome: Dictionary) -> void:
 	# think of a greeting, which is held (text and voice) until they step out, instead of the player waiting for it then.
 	_tell_synth_she_was_summoned()
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
+	RiftSettings.set_synth_name(str(assets.get("name", "")))
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
 	_set_status("Rift open: charging ...", false)

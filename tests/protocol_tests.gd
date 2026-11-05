@@ -25,10 +25,23 @@ func _init() -> void:
 	_room()
 	_resume()
 	_chat_memory()
+	_synth_name()
 	_screen()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
+
+
+## The chat labels them with what the server calls them, and falls back to SyntH when none was offered.
+func _synth_name() -> void:
+	var before := RiftSettings.synth_name()
+	RiftSettings.set_synth_name("")
+	_check(RiftSettings.synth_name() == "SyntH", "no name offered: SyntH")
+	RiftSettings.set_synth_name("  Rei ")
+	_check(RiftSettings.synth_name() == "Rei", "the offered name, trimmed")
+	RiftSettings.set_synth_name("")
+	_check(RiftSettings.synth_name() == "SyntH", "a server that stops offering one brings the default back")
+	RiftSettings.set_synth_name("" if before == "SyntH" else before)
 
 
 func _check(ok: bool, what: String) -> void:
