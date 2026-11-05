@@ -454,6 +454,8 @@ func _arrive() -> void:
 		return
 	_body.world_lookup = Callable(self, "_lookup_entity")
 	_body.sight = Callable(self, "_placed_entities")
+	_body.line_of_sight = Callable(self, "_line_of_sight_from")
+	_body.room_name = _room_id()
 	_body.picture_taker = Callable(self, "_take_picture")
 	_body.routine_done.connect(_on_routine_done)
 	_body.set_fetcher(_fetcher)

@@ -18,6 +18,10 @@ const WORLD_VERBS: Array[String] = [
 	# What they do on their own once asked; the result comes later, as an event (SynthRoutines).
 	"search", "explore", "watch", "bring", "stop",
 ]
+## Verbs only the CORE sends, to build a walk (plugins/rift_vessel/exploration.py): `survey` answers what can be walked to,
+## what is out of sight and what is in the way; `look_around` turns on the spot and names what comes into view. The model is
+## never offered them (Synth's connector does not list them) and never asks for them; they are accepted here all the same.
+const INTERNAL_VERBS: Array[String] = ["survey", "look_around"]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
 const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_right", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
 
@@ -28,11 +32,12 @@ const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_rig
 const IMPLEMENTED_VERBS: Array[String] = [
 	"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
 	"search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop",
+	"survey", "look_around",
 ]
 
 
 static func is_known_verb(verb: String) -> bool:
-	return CORE_VERBS.has(verb) or WORLD_VERBS.has(verb)
+	return CORE_VERBS.has(verb) or WORLD_VERBS.has(verb) or INTERNAL_VERBS.has(verb)
 
 
 ## "http://host:8080", "https://host", "ws://host:8080/" or a bare "host:8080"

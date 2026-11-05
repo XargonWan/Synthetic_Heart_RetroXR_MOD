@@ -285,6 +285,40 @@ func _explore(mine: int) -> void:
 		{"saw": names})
 
 
+## Turn on the spot for about `seconds`, naming what comes into view. Not a routine the model asked for: the core's walk
+## (plugins/rift_vessel/exploration.py) asks it at every stop, and uses the names. They are marked busy meanwhile, so the
+## idle glances keep out and a `stop` or a new walk ends it. {ok, data: {saw: [{name, area}]}}.
+func look_around(seconds: float) -> Dictionary:
+	if body == null:
+		return {"ok": false, "detail": "no_body"}
+	if running != "" and running != "look_around":
+		cancel("replaced by looking around")
+	_token += 1
+	var mine := _token
+	running = "look_around"
+	var collect: Dictionary = {}
+	seconds = clampf(seconds, 1.0, 10.0)
+	var steps := clampi(int(seconds / SCAN_STEP_SECONDS), 2, SCAN_STEPS)
+	var per := seconds / float(steps)
+	var yaw: float = body.rotation.y
+	var ok := true
+	for i in steps:
+		for e: Dictionary in _sight():
+			if str(e.get("type", "")) != "player":
+				collect[str(e.get("name", ""))] = true
+		yaw -= TAU / float(steps)
+		if not await _turn_to(yaw, mine, minf(per * 0.6, 0.45)) or not await _wait(per * 0.4, mine):
+			ok = false
+			break
+	if mine == _token:
+		running = ""
+	var saw: Array = []
+	for n: String in collect.keys():
+		if not n.is_empty():
+			saw.append({"name": n, "area": str(body.room_name)})
+	return {"ok": ok, "detail": "looked around" if ok else "stopped", "data": {"saw": saw}}
+
+
 func _watch(query: String, seconds: float, mine: int) -> void:
 	seconds = clampf(seconds, 3.0, WATCH_MAX)
 	var hit := await _acquire(query, mine, true, "watch")

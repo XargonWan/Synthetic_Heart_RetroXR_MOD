@@ -77,7 +77,8 @@ func _initialize() -> void:
 
 func _process(delta: float) -> bool:
 	_t += delta
-	if _t > 60.0:
+	var limit := float(OS.get_environment("PROBE_TIMEOUT")) if OS.get_environment("PROBE_TIMEOUT") != "" else 60.0
+	if _t > limit:
 		print("[probe] timeout")
 		quit(2)
 	return false

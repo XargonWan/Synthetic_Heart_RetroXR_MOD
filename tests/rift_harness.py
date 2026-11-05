@@ -192,10 +192,13 @@ async def _drive():
     # What they are offered is what the mod said it can do, and nothing else.
     declared = conn.declared_verbs()
     want = {"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
-            "search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop"}
+            "search", "watch", "pick_up", "put_down", "hand_over", "bring", "stop"}
     print(f"[synth] CHECK {'ok  ' if declared == want else 'FAIL'} verbs: the mod declared {sorted(declared)}")
+    # Hers on top of what the body can do: her aims and her walks (the core's). Never the two verbs the core uses to build a walk.
     offered = set(conn.get_world_actions()) | set(conn.core_verbs)
-    print(f"[synth] CHECK {'ok  ' if offered == want and 'observe' not in offered and 'attack' not in offered else 'FAIL'} verbs: offered to them {sorted(offered)}")
+    mine = {"set_goal", "update_goal", "explore"}
+    print(f"[synth] CHECK {'ok  ' if offered == want | mine and 'observe' not in offered and 'attack' not in offered and not ({'survey', 'look_around'} & offered) else 'FAIL'} verbs: offered to them {sorted(offered)}")
+    print(f"[synth] CHECK {'ok  ' if conn.mod_supports('survey') and conn.mod_supports('look_around') else 'FAIL'} verbs: the mod declares the two the core builds a walk with")
     # Curiosity: they can look at things, go to them by name, and ask what they are.
     r = await conn.act("inspect", {"target": "Crate"})
     show("inspect Crate", r)
@@ -227,6 +230,7 @@ async def _drive():
         print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} sighting: a thing put down in the room is told to them ({[e.summary for e in sights]!r})")
         await routines_through_the_socket(conn)
         await asyncio.sleep(12)   # the probe looks at how they behave when nobody is asking their anything
+    await explore_through_the_socket(conn)
     await FakePlugin().disconnect_world("retroxr")
 
 
@@ -289,6 +293,21 @@ async def routines_through_the_socket(conn):
     # What they were told about the room is names a person could say.
     names = [e.get("name") for e in ((st.get("extra") or {}).get("entities") or [])]
     print(f"[synth] CHECK {'ok  ' if names and all(n and not str(n).startswith('@') for n in names) else 'FAIL'} the entities they are told have names: {names!r}")
+
+
+async def explore_through_the_socket(conn):
+    """The core decides the route; the body answers one question at a time. Last, because it moves them and shows them
+    the room: the checks above assume what they have not seen yet."""
+    conn.set_explore_budget(45)
+    EVENTS.clear()
+    r = await conn.act("explore", {})
+    print(f"[synth] CHECK {'ok  ' if r.ok and 'going for a walk' in (r.detail or '') and conn.idle_busy() else 'FAIL'} explore: answered at once, the walk goes on ({r.detail!r})")
+    ev = await wait_event("explore_done", timeout=120.0)
+    d = (ev.data or {}) if ev else {}
+    ok = ev is not None and d.get("legs", 0) >= 2 and d.get("distance", 0) > 3.0 and d.get("stopped_because") in ("budget", "nothing_left")
+    print(f"[synth] CHECK {'ok  ' if ok else 'FAIL'} explore: a walk of {d.get('legs')} legs, {d.get('distance')} m, ended by {d.get('stopped_because')!r} after {d.get('seconds')} s; came across {[x['name'] for x in d.get('discovered', [])]}")
+    print(f"[synth] CHECK {'ok  ' if ev is not None and 'What do you want to do now?' in ev.summary and not conn.idle_busy() else 'FAIL'} explore: told afterwards, and the body is free again")
+    print(f"[synth] explore summary: {ev.summary if ev else None}")
 
 
 async def main():
