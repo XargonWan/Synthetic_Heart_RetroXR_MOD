@@ -1,0 +1,62 @@
+name: Release
+
+# Every push to main packs the mod and publishes it as the release v<version>, with the zip attached and the notes
+# written by tools/release_notes.py from the commits since the previous release. The version is the one in mod.json:
+# bump it in the commit that makes the release. A push that does not change the version publishes nothing, because the
+# release already exists. The zip is the mod as RetroXR loads it (tools/pack_mod.py, read back before it is published).
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the notes need the full history and its tags
+
+      - id: version
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('mod.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version in mod.json: $VERSION"
+
+      - id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "release v${{ steps.version.outputs.version }} already exists: nothing to publish"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack the mod
+        if: steps.exists.outputs.found == 'false'
+        run: python3 tools/pack_mod.py --out "dist/xenu.synth_rift-${{ steps.version.outputs.version }}.zip"
+
+      - name: Release notes
+        if: steps.exists.outputs.found == 'false'
+        run: |
+          python3 tools/release_notes.py --repo "${{ github.repository }}" --version "${{ steps.version.outputs.version }}" \
+            --header .github/release-header.md --body RELEASE.md
+
+      - name: Publish the release
+        if: steps.exists.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            "dist/xenu.synth_rift-${{ steps.version.outputs.version }}.zip" \
+            --repo "${{ github.repository }}" \
+            --target "$GITHUB_SHA" \
+            --title "Synthetic Heart Rift v${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE.md
