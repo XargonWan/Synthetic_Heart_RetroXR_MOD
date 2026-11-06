@@ -1,4 +1,6 @@
 .godot/
 *.tmp
+dist/
+RELEASE.md
 finito
 TODO*.md

@@ -160,6 +160,60 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	_check(not body.is_turning(), "a turn under the threshold is eased, not a clip (%.0f deg)" % rad_to_deg(wrapf(deg_to_rad(-90.0) - body.rotation.y, -PI, PI)))
 
+	# A small turn is a clip too (it used to be a swivel under 40 degrees).
+	body.global_position = Vector3.ZERO
+	body.rotation.y = 0.0
+	body.face_yaw(deg_to_rad(25.0))
+	await get_tree().physics_frame
+	_check(body.is_turning() and puppet.playing() == "turn_left", "a 25 degree turn plays the turn clip (%s)" % puppet.playing())
+	while body.is_turning():
+		await get_tree().physics_frame
+	for i in 40:
+		await get_tree().physics_frame
+	_check(absf(wrapf(body.rotation.y - deg_to_rad(25.0), -PI, PI)) < deg_to_rad(3.0), "and ends facing it (%.0f deg)" % rad_to_deg(body.rotation.y))
+
+	# A turn asked while a clip plays waits for it; the body does not swivel under the clip.
+	body.rotation.y = 0.0
+	body.set_karada_state("idle")
+	_check(body.play_once("greet"), "a greeting plays")
+	body.face_yaw(deg_to_rad(90.0))
+	for i in 10:
+		await get_tree().physics_frame
+	_check(absf(body.rotation.y) < deg_to_rad(1.0) and not body.is_turning(), "a turn asked during it waits (rotation %.0f deg)" % rad_to_deg(body.rotation.y))
+	var waited := 0
+	while puppet.playing() == "greet" and waited < 1200:
+		await get_tree().physics_frame
+		waited += 1
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(body.is_turning() and puppet.playing() == "turn_left", "and plays the turn once the clip is over (%s)" % puppet.playing())
+	while body.is_turning():
+		await get_tree().physics_frame
+	for i in 40:
+		await get_tree().physics_frame
+
+	# A corner in the way of a walk is a turn on the spot, not a swivel with the walk playing.
+	body.global_position = Vector3.ZERO
+	body.rotation.y = 0.0
+	body._turn_first = false
+	body._goal = Vector3(0.0, 0.0, 3.0)   # straight behind: 180 degrees from where they face, no turn_first
+	body._path = PackedVector3Array([Vector3(0.0, 0.0, 3.0)])
+	body._path_i = 0
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(body.is_turning(), "a way that goes straight back starts with a turn, not a swivel (%s)" % puppet.playing())
+	body._end_walk(false, "the probe ends it")
+	while body.is_turning():
+		await get_tree().physics_frame
+
+	# Seated: a standing person's turn clip would be wrong; it is eased.
+	body.set_karada_state("sit")
+	body.rotation.y = 0.0
+	body.face_yaw(deg_to_rad(90.0))
+	await get_tree().physics_frame
+	_check(not body.is_turning(), "seated, a turn is eased and not a standing clip")
+	body.set_karada_state("idle")
+
 	print("[probe] done, %d cases, %d failed" % [_count, _failed])
 	get_tree().quit(1 if _failed > 0 else 0)
 
