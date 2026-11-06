@@ -67,6 +67,9 @@ var routines: Node = null
 ## Their head going now and then to something that is really there (a probe that measures their gaze switches it off).
 var idle_curiosity_on := true
 signal routine_done(kind: String, ok: bool, summary: String, data: Dictionary)
+## They were following the player and cannot (`too_far`: beyond how far they may go; `blocked`: no way to them). Told once
+## each time, and only for what they did not choose: an `unfollow`, a `stop` or a walk of their own is the model's doing.
+signal follow_lost(reason: String)
 ## Where they are looking: at the player ("player"), at a point they chose ("point"), or nowhere.
 ## A glance is short: the player moving or clicking earns ONE (GLANCE_SECONDS), and then they
 ## ignores them for GLANCE_COOLDOWN, or they would stare like a security camera. They look at the player
@@ -92,6 +95,8 @@ const GAZE_TURN_DEG := 5.0
 const DELIBERATE_MS := 6000
 var _follow := false
 var _follow_clock := 0.0
+var _follow_walk := false   # the walk under way is a follow's own
+var _follow_told := false   # `follow_lost` was told and nothing has gone right since
 const FOLLOW_DISTANCE := 1.4
 const STOP_SHORT := 0.9
 var _bubble_left := 0.0
@@ -105,11 +110,39 @@ var _replans := 0
 var _avoid: Array[Vector3] = []
 const WAYPOINT_REACHED := 0.25
 const MAX_REPLANS := 2
+## A walk with no leash (an exploration leg, `move` with `free`): it keeps to floor (SynthNav.check_ground), keeps clear of
+## the player and of anything rolling, looks a couple of metres ahead every `AHEAD_EVERY` seconds and plans round what it
+## finds there, which is a good deal more than a leashed walk to a place in a room they know.
+var _free_walk := false
+const MAX_REPLANS_FREE := 5
+const AHEAD_EVERY := 0.4
+const AHEAD_METRES := 2.0
+## The player is kept this far off (shrunk when they already stand nearer, or they could never step away).
+const PLAYER_SPACE := 0.9
+const ROLLING_SPEED := 0.4
+const ROLLING_SPACE := 0.7
+var _ahead_clock := 0.0
+var _plan_cell := SynthNav.CELL
+## A survey asks this many physics questions a frame and settles at most this many cells, in at most this many questions.
+const SURVEY_QUERIES_PER_FRAME := 150
+const SURVEY_MAX_CELLS := 1400
+const SURVEY_MAX_QUERIES := 9000
+const SURVEY_BUCKET := 1.5
+const SURVEY_MIN_COST := 1.0
+const SURVEY_SIGHT_RANGE := 9.0
+const SURVEY_RAYS_PER_FRAME := 120
+## Set by the Summoner: Callable(from, to, node, own_rid) -> bool, can `from` see `to`; and the room's name.
+var line_of_sight: Callable = Callable()
+var room_name := ""
 var _stuck_for := 0.0
 ## Turning on the spot with one of the skin's turn clips (`turn_left` / `turn_right`): a body that swivels to a new
 ## heading without a step looks like a turret. `_turn_gained` is what the clip turns them by the time it is cut off
 ## (radians, + = left), added to the heading when it ends, because the clip shows the turn through the hips only.
-const TURN_MIN_DEG := 40.0
+const TURN_MIN_DEG := 15.0
+## A turn this short is not worth a clip (the clip's first moments are a wind-up, not a turn).
+const TURN_MIN_SECONDS := 0.12
+## Mid-walk, a change of direction this big stops the walk for the turn clip; a smaller one is a curve in the walk.
+const WALK_TURN_DEG := 60.0
 var _turning := false
 var _turn_left := 0.0
 var _turn_clip := ""
@@ -270,16 +303,29 @@ func _physics_process(delta: float) -> void:
 			_end_walk(false, "no_way_round: got as near as %.1f m to it" % to_goal.length())
 			return
 	var dir := aim.normalized()
-	# From standing, the first thing is to turn to where they are going (a quarter turn or more takes a clip).
-	if _turn_first:
+	# The first thing is to turn to where they are going, from standing and at every corner of the way too: a body
+	# that swivels round the corner with its walk playing is the swivel without a turn this clip exists to replace.
+	var heading_wanted := atan2(-dir.x, -dir.z)
+	if _turn_first or absf(rad_to_deg(wrapf(heading_wanted - rotation.y, -PI, PI))) >= WALK_TURN_DEG:
 		_turn_first = false
-		if begin_turn(atan2(-dir.x, -dir.z)):
+		if begin_turn(heading_wanted):
 			return
 	_set_anim("walk")
 	velocity.x = dir.x * WALK_SPEED
 	velocity.z = dir.z * WALK_SPEED
 	rotation.y = lerp_angle(rotation.y, atan2(-dir.x, -dir.z), minf(1.0, 8.0 * delta))
 	move_and_slide()
+
+	if _free_walk:
+		_ahead_clock += delta
+		if _ahead_clock >= AHEAD_EVERY:
+			_ahead_clock = 0.0
+			if not _way_ahead_clear() and _replans < MAX_REPLANS_FREE:
+				# Something came onto the way (the player stepped in, a thing rolled): plan round it BEFORE walking into it.
+				_replans += 1
+				print("[Rift] walk: something is on the way ahead, planning round it (try %d)" % _replans)
+				if _plan_path(goal) and not _path.is_empty():
+					return
 
 	# Blocked: asked to move, and the body is not getting anywhere.
 	_stuck_sample += delta
@@ -292,7 +338,7 @@ func _physics_process(delta: float) -> void:
 		_stuck_sample = 0.0
 	if _stuck_for > STUCK_SECONDS:
 		# Something the plan did not know of (it was put there, or is the player): once or twice, another way.
-		if _replans < MAX_REPLANS:
+		if _replans < (MAX_REPLANS_FREE if _free_walk else MAX_REPLANS):
 			_replans += 1
 			_avoid.append(global_position + dir * 0.45)
 			_stuck_for = 0.0
@@ -371,9 +417,13 @@ func gaze_kind() -> String:
 	return _look_kind if _look_left > 0.0 and is_gazing() else ""
 
 
-## While they were asked to follow: keep to FOLLOW_DISTANCE of the player (inside their leash).
+## While they were asked to follow: keep to FOLLOW_DISTANCE of the player (inside their leash). What they do for the model
+## (a routine) comes first and they go on following after it. When they cannot (the player is beyond the leash, or there is
+## no way to them) the model is told, once.
 func _follow_the_player(delta: float) -> void:
 	if not _follow:
+		return
+	if routines != null and routines.is_busy():
 		return
 	_follow_clock += delta
 	if _follow_clock < 0.5:
@@ -384,6 +434,7 @@ func _follow_the_player(delta: float) -> void:
 		return
 	var to_player := Vector3(cam.global_position.x - global_position.x, 0.0, cam.global_position.z - global_position.z)
 	if to_player.length() <= FOLLOW_DISTANCE + 0.4:
+		_follow_told = false
 		return
 	var dest := cam.global_position - to_player.normalized() * FOLLOW_DISTANCE
 	dest.y = global_position.y
@@ -391,11 +442,33 @@ func _follow_the_player(delta: float) -> void:
 	if from_anchor.length() > LEASH:
 		var edge := anchor + from_anchor.normalized() * LEASH
 		dest = Vector3(edge.x, global_position.y, edge.z)
+		var gap := Vector3(cam.global_position.x - dest.x, 0.0, cam.global_position.z - dest.z).length()
+		# At the edge already and the player still further than they would stand: that is "too far", not a walk to make.
+		if Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z).length() <= ARRIVE_DISTANCE + 0.3:
+			if gap > FOLLOW_DISTANCE + 1.0:
+				_tell_follow_lost("too_far")
+			return
+	_follow_walk = true
 	_begin_walk(dest)
 
 
+func _tell_follow_lost(reason: String) -> void:
+	if _follow_told:
+		return
+	_follow_told = true
+	print("[Rift] follow: lost the player (%s)" % reason)
+	follow_lost.emit(reason)
+
+
+## Whether they are following the player right now (it is part of the state Synth is sent).
+func is_following() -> bool:
+	return _follow
+
+
 ## Start walking to `dest`: the goal, and the way round things to it. False when there is no way at all.
-func _begin_walk(dest: Vector3) -> bool:
+func _begin_walk(dest: Vector3, free: bool = false) -> bool:
+	_free_walk = free
+	_ahead_clock = 0.0
 	_turn_first = _goal == null and not _turning
 	_face_goal = NAN
 	_goal = dest
@@ -412,16 +485,19 @@ func _begin_walk(dest: Vector3) -> bool:
 ## Work out the way to `dest` from here. With no way found at all the walk goes straight (as it always did) and the
 ## stuck check ends it; a partial way is walked to its end and then reported as a failed walk.
 func _plan_path(dest: Vector3) -> bool:
-	var nav := SynthNav.new()
-	nav.space = get_world_3d().direct_space_state
-	nav.mask = _body_mask()
-	nav.exclude = [get_rid()]
-	nav.floor_y = global_position.y
-	nav.anchor = anchor
-	nav.leash = LEASH
-	nav.avoid = _avoid
+	var nav := _make_nav(_free_walk)
+	_plan_cell = nav.cell_size
 	var t0 := Time.get_ticks_usec()
 	var res := nav.plan(global_position, dest)
+	if _free_walk and not bool(res["complete"]):
+		# The coarse grid can lose a narrow gap (a door only just wider than they are): once more on the fine one.
+		var fine := _make_nav(true, false)
+		var res2 := fine.plan(global_position, dest)
+		print("[Rift] walk: no full way on the coarse grid (%d questions); the fine one: %s (%d questions)" % [
+			int(res["queries"]), "a way" if bool(res2["complete"]) else "none either", int(res2["queries"])])
+		if bool(res2["complete"]):
+			res = res2
+			_plan_cell = fine.cell_size
 	_path = res["path"]
 	_path_i = 0
 	_path_complete = bool(res["complete"])
@@ -429,6 +505,68 @@ func _plan_path(dest: Vector3) -> bool:
 		"a way" if _path_complete else "NO full way", str(dest), _path.size(), int(res["queries"]),
 		float(Time.get_ticks_usec() - t0) / 1000.0, " (search capped)" if bool(res.get("capped", false)) else ""])
 	return _path_complete
+
+
+## A SynthNav for what stands round them now. `free`: no leash; floor under every cell; keep clear of the player and of
+## things rolling about. A fresh one each time (what it caches is what the room was like when it was made).
+func _make_nav(free: bool, coarse: bool = true) -> SynthNav:
+	var nav := SynthNav.new()
+	nav.space = get_world_3d().direct_space_state
+	nav.mask = _body_mask()
+	nav.exclude = [get_rid()]
+	nav.floor_y = global_position.y
+	nav.anchor = anchor
+	nav.leash = INF if free else LEASH
+	nav.avoid = _avoid
+	if free:
+		nav.check_ground = true
+		nav.discs = _hazard_discs()
+		if coarse:
+			nav.cell_size = SynthNav.SURVEY_CELL
+			nav.max_queries = SynthNav.FREE_MAX_QUERIES
+	return nav
+
+
+## How much room the player is given when they stand `distance` away: their whole space, less when they already stand
+## closer (or there would be no cell they could step to).
+static func player_space(distance: float) -> float:
+	return minf(PLAYER_SPACE, maxf(0.3, distance - 0.1))
+
+
+## Who and what to keep clear of, as {"pos", "r"}: the player (their space shrinks to what is left when they already stand
+## close), and every loose body that is moving.
+func _hazard_discs() -> Array:
+	var out: Array = []
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	if cam != null:
+		var p := Vector3(cam.global_position.x, global_position.y, cam.global_position.z)
+		var d := Vector2(p.x - global_position.x, p.z - global_position.z).length()
+		out.append({"pos": p, "r": player_space(d), "kind": "obstacle"})
+	if is_inside_tree():
+		for n: Node in get_tree().get_nodes_in_group("spawned"):
+			if n is RigidBody3D and (n as RigidBody3D).linear_velocity.length() > ROLLING_SPEED:
+				var rp := (n as RigidBody3D).global_position
+				out.append({"pos": Vector3(rp.x, global_position.y, rp.z), "r": ROLLING_SPACE, "kind": "obstacle"})
+	return out
+
+
+## Is the way clear for the next `AHEAD_METRES` of the path, as the room is NOW?
+func _way_ahead_clear() -> bool:
+	if _path.is_empty():
+		return true
+	var nav := _make_nav(true, _plan_cell > SynthNav.CELL + 0.01)   # the grid the path was planned on
+	nav.mark_free(global_position)
+	var here := global_position
+	var left := AHEAD_METRES
+	var i := _path_i
+	while i < _path.size() and left > 0.0:
+		var to := _path[i]
+		if not nav.clear_line(here, to):
+			return false
+		left -= Vector2(to.x - here.x, to.z - here.z).length()
+		here = to
+		i += 1
+	return true
 
 
 func _flat_to(p: Vector3) -> Vector3:
@@ -444,6 +582,7 @@ func _body_mask() -> int:
 
 func _end_walk(ok: bool, detail: String) -> void:
 	_goal = null
+	_free_walk = false
 	_path = PackedVector3Array()
 	_path_i = 0
 	_path_complete = true
@@ -452,6 +591,13 @@ func _end_walk(ok: bool, detail: String) -> void:
 	_stuck_for = 0.0
 	_stuck_sample = 0.0
 	velocity = Vector3.ZERO
+	var by_follow := _follow_walk
+	_follow_walk = false
+	if by_follow and _follow:
+		if ok:
+			_follow_told = false
+		else:
+			_tell_follow_lost("blocked")
 	_walk_result = {"ok": ok, "detail": detail, "data": {"position": Protocol.vec(global_position)}}
 	print("[Rift] walk ended: %s at %s" % [detail, str(global_position)])
 	_walk_finished.emit()
@@ -641,6 +787,15 @@ func is_busy() -> bool:
 	return _goal != null or _one_shot != "" or _turning or _ethereal or _presence == "summon"
 
 
+## Done with everything they were told to do: no walk, turn or clip, no routine, no voice playing or waiting.
+## The server paces its next "what do you want to do?" on this, so a new beat neither lands on top of an action
+## (a clip still playing) nor waits long after it ended.
+func settled() -> bool:
+	if is_busy() or is_speaking() or not _voice_queue.is_empty():
+		return false
+	return routines == null or not bool(routines.call("is_busy"))
+
+
 ## The clip they rest in. Standing while busy; the state's clip (if their skin has it) when they are not.
 func _rest_anim() -> String:
 	if _puppet == null:
@@ -662,6 +817,10 @@ func _base_anim() -> String:
 ## their hands do. It goes on while they walk, and on whatever they are doing with their legs. It does not go on
 ## while they greet, arrive or leave: those are the whole body's.
 func _wanted_layer() -> String:
+	# Holding a thing out to the player: both arms forward (the "give" clip, when the skin has one).
+	if _puppet != null and _held != null and routines != null and routines.offering and _one_shot == "" and not _ethereal \
+			and _presence != "summon" and bool(_puppet.call("has_clip", "give")):
+		return "give"
 	if _puppet != null and _held != null and _one_shot == "" and not _ethereal and _presence != "summon" \
 			and bool(_puppet.call("has_clip", "gaming")):
 		return "gaming"  # their hands together in front of them: they hold something in both
@@ -675,6 +834,11 @@ func _wanted_layer() -> String:
 func _is_layer(clip_name: String) -> bool:
 	return _puppet != null and bool(_puppet.call("has_clip", clip_name)) \
 		and str(_puppet.call("clip_mask", clip_name)) == "upper_body"
+
+
+## The routines changed what the hands do (they hold something out, or stopped): show it.
+func refresh_pose() -> void:
+	_refresh_anim()
 
 
 ## Put the clips back to what they should be doing now, unless a walk or a one-shot has their legs.
@@ -1010,11 +1174,20 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 	if action in ["move", "follow"] and routines != null and routines.is_busy():
 		routines.cancel("you were told to %s" % action)
 	match action:
-		"search", "explore", "watch", "pick_up", "hand_over", "bring", "put_down":
+		"search", "explore", "watch", "pick_up", "hand_over", "bring", "put_down", "operate", "combine":
 			return routines.start(action, payload)
 		"stop":
 			routines.cancel("you were told to stop")
+			# Stopping is stopping: they no longer follow and no longer walk on to where they were going.
+			_follow = false
+			_follow_walk = false
+			if _goal != null:
+				_end_walk(false, "stopped")
 			return {"ok": true, "detail": "stopped"}
+		"survey":
+			return await survey(payload)
+		"look_around":
+			return await routines.look_around(float(payload.get("seconds", 3.0)))
 		"say":
 			var text := str(payload.get("text", "")).strip_edges()
 			if text.is_empty():
@@ -1029,14 +1202,20 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 		"look_at":
 			return _look_at(payload)
 		"inspect":
-			return _inspect(payload)
+			# Nothing by that name in their sight: say so at once. Else they go over to it, pick it up if they can and study it;
+			# what they find comes afterwards, as the routine's result.
+			if _resolve(payload).is_empty():
+				return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
+			return routines.start("inspect", payload)
 		"follow":
 			_follow = true
 			_follow_clock = 0.0
-			return {"ok": true, "detail": "following the player"}
+			_follow_told = false
+			return {"ok": true, "detail": "following the player", "data": {"following": true}}
 		"unfollow":
 			_follow = false
-			return {"ok": true, "detail": "not following"}
+			_follow_walk = false
+			return {"ok": true, "detail": "not following", "data": {"following": false}}
 		"move":
 			return await _move(payload)
 		"emote":
@@ -1051,6 +1230,101 @@ func act(action: String, payload: Dictionary) -> Dictionary:
 			return {"ok": false, "detail": "not_implemented_yet: " + action}
 
 
+# ── a survey: what can be walked to, what is out of sight, what is in the way ───────────────────────────────────
+#
+# The core (Synth) decides where an exploration goes; it asks the body what it can say about where it is. This answers: the
+# places there is a way to (with the length of the way), whether any point they have looked from has a line of sight to
+# each, the things in front of them as places to go and study, and what to keep clear of. Read only: nothing moves.
+
+func survey(payload: Dictionary) -> Dictionary:
+	var vps: Array[Vector3] = []
+	for v: Variant in payload.get("viewpoints", []):
+		if v is Array and (v as Array).size() >= 3:
+			vps.append(Vector3(float(v[0]), float(v[1]), float(v[2])))
+	var want := clampi(int(payload.get("max", 24)), 4, 48)
+	var nav := _make_nav(true)
+	nav.cell_size = SynthNav.SURVEY_CELL
+	var t0 := Time.get_ticks_msec()
+	var st: SynthNav.ReachState = nav.reach_begin(global_position)
+	while true:
+		if nav.reach_step(st, SURVEY_QUERIES_PER_FRAME, SURVEY_MAX_CELLS) or nav.queries >= SURVEY_MAX_QUERIES:
+			break
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return {"ok": false, "detail": "gone"}
+	var cells: Dictionary = nav.reach_cells(st)
+	var here := global_position
+	# One place per square of SURVEY_BUCKET metres (the nearest to its middle), then an even spread of them.
+	var best: Dictionary = {}
+	for c: Vector2i in cells.keys():
+		var cost: float = cells[c]
+		if cost < SURVEY_MIN_COST:
+			continue
+		var centre := nav.centre_of(c)
+		var key := Vector2i(floori(centre.x / SURVEY_BUCKET), floori(centre.z / SURVEY_BUCKET))
+		var mid := Vector3((float(key.x) + 0.5) * SURVEY_BUCKET, 0.0, (float(key.y) + 0.5) * SURVEY_BUCKET)
+		var off := Vector2(centre.x - mid.x, centre.z - mid.z).length()
+		if not best.has(key) or off < float(best[key]["off"]):
+			best[key] = {"pos": centre, "cost": cost, "off": off}
+	var picks: Array = best.values()
+	picks.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["cost"]) < float(b["cost"]))
+	if picks.size() > want:
+		var spread: Array = []
+		for k in want:
+			spread.append(picks[int(float(k) * float(picks.size()) / float(want))])
+		picks = spread
+	# Which of them can they already see from where they have looked?
+	var eye := eye_height()
+	var rays := 0
+	var candidates: Array = []
+	for p: Dictionary in picks:
+		var pos: Vector3 = p["pos"]
+		var seen := false
+		if line_of_sight.is_valid():
+			for vp: Vector3 in vps:
+				if Vector2(vp.x - pos.x, vp.z - pos.z).length() > SURVEY_SIGHT_RANGE:
+					continue
+				rays += 1
+				if bool(line_of_sight.call(vp + Vector3(0.0, eye, 0.0), pos + Vector3(0.0, 0.9, 0.0), null, get_rid())):
+					seen = true
+					break
+				if rays % SURVEY_RAYS_PER_FRAME == 0:
+					await get_tree().process_frame
+		candidates.append({"pos": Protocol.vec(pos), "cost": snappedf(float(p["cost"]), 0.1), "seen": seen})
+	# Things in front of them, as places to go up to: a spot 1.2 m short of each that there is a way to.
+	var pois: Array = []
+	if sight.is_valid():
+		for e: Dictionary in sight.call():
+			if str(e.get("type", "")) == "player" or bool(e.get("held", false)):
+				continue
+			var ep: Vector3 = e["position"]
+			var back := Vector3(here.x - ep.x, 0.0, here.z - ep.z)
+			var approach := ep + (back.normalized() * 1.2 if back.length() > 0.01 else Vector3.ZERO)
+			var near_cost := INF
+			var near_pos := Vector3.ZERO
+			var near_d := 0.8
+			for c: Vector2i in cells.keys():
+				var cp := nav.centre_of(c)
+				var d := Vector2(cp.x - approach.x, cp.z - approach.z).length()
+				if d < near_d:
+					near_d = d
+					near_cost = cells[c]
+					near_pos = cp
+			if near_cost == INF:
+				continue
+			pois.append({"name": str(e.get("name", "")), "pos": Protocol.vec(near_pos), "cost": snappedf(near_cost, 0.1),
+				"area": room_name, "seen": true})
+	var hazards: Array = []
+	for d: Dictionary in _hazard_discs():
+		hazards.append({"pos": Protocol.vec(d["pos"]), "radius": snappedf(float(d["r"]), 0.1), "kind": str(d.get("kind", "obstacle"))})
+	var fwd := heading()
+	print("[Rift] survey: %d cells reached, %d candidates (%d seen), %d things, %d hazards, %d questions, %d ms%s" % [
+		cells.size(), candidates.size(), candidates.filter(func(c: Dictionary) -> bool: return bool(c["seen"])).size(),
+		pois.size(), hazards.size(), nav.queries, Time.get_ticks_msec() - t0, " (capped)" if st.capped else ""])
+	return {"ok": true, "detail": "surveyed", "data": {"position": Protocol.vec(global_position), "heading": atan2(fwd.z, fwd.x),
+		"candidates": candidates, "pois": pois, "hazards": hazards}}
+
+
 # ── what they hold ───────────────────────────────────────────────────────────
 #
 # A thing they pick up is carried by moving it (never by changing who owns it in the room): the object is frozen and
@@ -1063,6 +1337,12 @@ const LIFT_MAX_SIZE := 0.6
 
 var _held: Node3D = null
 var _held_name := ""
+## What they take travels to their hands, over `CARRY_FLIGHT_SECONDS` (eased, a little arc), instead of being there in a
+## fifth of a second: it used to snap across a metre of table. After that it follows their hands.
+const CARRY_FLIGHT_SECONDS := 0.55
+const CARRY_FLIGHT_ARC := 0.08
+var _carry_from := Vector3.ZERO
+var _carry_t := 1.0
 var _held_saved: Dictionary = {}
 
 
@@ -1077,6 +1357,33 @@ func is_holding_still() -> bool:
 
 func is_walking() -> bool:
 	return _goal != null
+
+
+## What they hold, as the node (null when their hands are empty or the player took it).
+func held_node() -> Node3D:
+	return _held if _held != null and is_instance_valid(_held) else null
+
+
+## Let go of what they hold WHERE IT IS, as it was before they took it, and hand it back: for the one who puts it somewhere
+## themselves (into a machine's slot, which takes it from there). `put_down` is the one that sets it on a surface.
+func release_held() -> Node3D:
+	if _held == null:
+		return null
+	var node := _held
+	if is_instance_valid(node):
+		var rb := node as RigidBody3D
+		rb.collision_layer = int(_held_saved.get("layer", rb.collision_layer))
+		rb.collision_mask = int(_held_saved.get("mask", rb.collision_mask))
+		rb.freeze = bool(_held_saved.get("freeze", false))
+		if _held_saved.has("release_mode") and "release_mode" in rb:
+			rb.set("release_mode", _held_saved["release_mode"])
+		rb.linear_velocity = Vector3.ZERO
+		rb.angular_velocity = Vector3.ZERO
+	print("[Rift] they let go of %s" % _held_name)
+	_held = null
+	_held_name = ""
+	_refresh_anim()
+	return node if is_instance_valid(node) else null
 
 
 ## Why they cannot lift it, or "" when they can. A loose object (a RigidBody3D) no larger than a person carries in two hands,
@@ -1098,6 +1405,12 @@ func lift_refusal(node: Node3D) -> String:
 
 ## The widest side of everything visible that `node` is made of, as one box in the world (0 when nothing is drawn).
 func lift_size(node: Node3D) -> float:
+	var box := _world_box(node)
+	return maxf(box.size.x, maxf(box.size.y, box.size.z))
+
+
+## Everything visible that `node` is made of, as one box in the world (a zero box when nothing is drawn).
+func _world_box(node: Node3D) -> AABB:
 	var box := AABB()
 	var first := true
 	for m: Node in node.find_children("*", "GeometryInstance3D", true, false):
@@ -1107,7 +1420,27 @@ func lift_size(node: Node3D) -> float:
 		var world := g.global_transform * g.get_aabb()
 		box = world if first else box.merge(world)
 		first = false
-	return 0.0 if first else maxf(box.size.x, maxf(box.size.y, box.size.z))
+	return box
+
+
+## Where on top of `node` a thing can be set down, as {ok, points}: spots above its upper side (the one nearest to them
+## first, then the middle), `margin` in from the edge. {ok: false} for something with no top to speak of (narrower than a hand).
+## The spots are only where to AIM: `put_down` finds the real surface under each.
+func surface_top(node: Node3D, margin: float = 0.1) -> Dictionary:
+	var box := _world_box(node)
+	if box.size.x < 0.25 or box.size.z < 0.25:
+		return {"ok": false}
+	var lo := Vector2(box.position.x + margin, box.position.z + margin)
+	var hi := Vector2(box.end.x - margin, box.end.z - margin)
+	var mid := Vector2(box.get_center().x, box.get_center().z)
+	if hi.x < lo.x:
+		lo.x = mid.x
+		hi.x = mid.x
+	if hi.y < lo.y:
+		lo.y = mid.y
+		hi.y = mid.y
+	var near := Vector3(clampf(global_position.x, lo.x, hi.x), box.end.y, clampf(global_position.z, lo.y, hi.y))
+	return {"ok": true, "points": [near, Vector3(mid.x, box.end.y, mid.y)]}
 
 
 func can_hold(node: Node3D) -> bool:
@@ -1127,6 +1460,8 @@ func hold(node: Node3D, label: String) -> bool:
 	rb.collision_mask = 0
 	_held = rb
 	_held_name = label
+	_carry_from = rb.global_position
+	_carry_t = 0.0
 	print("[Rift] they pick up %s" % label)
 	_refresh_anim()
 	return true
@@ -1157,21 +1492,40 @@ func _carry(delta: float) -> void:
 		_refresh_anim()
 		return
 	var want := hand_point()
+	if _carry_t < 1.0:
+		_carry_t = minf(1.0, _carry_t + delta / CARRY_FLIGHT_SECONDS)
+		var k := _carry_t * _carry_t * (3.0 - 2.0 * _carry_t)
+		_held.global_position = _carry_from.lerp(want, k) + Vector3.UP * (CARRY_FLIGHT_ARC * sin(PI * _carry_t))
+		return
 	_held.global_position = _held.global_position.lerp(want, minf(1.0, 12.0 * delta))
 
 
-## Let go of it, on the surface under their hands in front of them (a table, the floor), as it was before they took it.
-func put_down() -> void:
+## Let go of it, as it was before they took it, and say where it ended up: {ok, where}. Without `over` that is on the surface
+## under their hands in front of them (a table, the floor); with `over` (a point above a surface, see `surface_top`) it is on
+## the flat surface below that point, and {ok: false} (still held) when there is none.
+func put_down(over: Variant = null) -> Dictionary:
 	if _held == null:
-		return
+		return {"ok": false, "where": ""}
 	var node := _held
-	if is_instance_valid(node):
+	var spot := Vector3.ZERO
+	var where := "in front of you"
+	if over is Vector3:
+		var o: Vector3 = over
+		var found := _flat_surface_below(Vector3(o.x, o.y + 0.3, o.z), 1.2)
+		if found.is_empty():
+			return {"ok": false, "where": ""}
+		spot = (found["position"] as Vector3) + Vector3(0, 0.08, 0)
+		where = _surface_name(found)
+	else:
 		var from := hand_point() - global_basis.z * 0.25
-		var query := PhysicsRayQueryParameters3D.create(from + Vector3(0, 0.1, 0), from + Vector3(0, -2.0, 0))
-		query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
-		query.exclude = [get_rid()]
-		var hit := get_world_3d().direct_space_state.intersect_ray(query)
-		node.global_position = ((hit["position"] as Vector3) + Vector3(0, 0.08, 0)) if hit.has("position") else from
+		var found := _flat_surface_below(from + Vector3(0, 0.1, 0), 2.1)
+		if found.is_empty():
+			spot = from
+		else:
+			spot = (found["position"] as Vector3) + Vector3(0, 0.08, 0)
+			where = _surface_name(found)
+	if is_instance_valid(node):
+		node.global_position = spot
 		var rb := node as RigidBody3D
 		rb.collision_layer = int(_held_saved.get("layer", rb.collision_layer))
 		rb.collision_mask = int(_held_saved.get("mask", rb.collision_mask))
@@ -1181,15 +1535,56 @@ func put_down() -> void:
 		rb.linear_velocity = Vector3.ZERO
 		rb.angular_velocity = Vector3.ZERO
 		rb.sleeping = false
-	print("[Rift] they put down %s" % _held_name)
+	print("[Rift] they put down %s %s" % [_held_name, where])
 	_held = null
 	_held_name = ""
 	_refresh_anim()
+	return {"ok": true, "where": where}
+
+
+## The first FLAT surface straight down from `from` within `reach`: not another thing small enough to be carried (a cartridge
+## lying on the table is not the table) and not a wall or an edge. {} when there is none; else the ray's hit.
+func _flat_surface_below(from: Vector3, reach: float) -> Dictionary:
+	var skip: Array[RID] = [get_rid()]
+	for _i in 6:
+		var query := PhysicsRayQueryParameters3D.create(from, from + Vector3(0, -reach, 0))
+		query.collision_mask = 0xFFFFFFFF & ~(1 << 20)
+		query.exclude = skip
+		var hit := get_world_3d().direct_space_state.intersect_ray(query)
+		if hit.is_empty():
+			return {}
+		var collider := hit.get("collider") as CollisionObject3D
+		var loose := collider is RigidBody3D and lift_refusal(collider as Node3D) == ""
+		if collider == null or loose or (hit["normal"] as Vector3).y < 0.6:
+			if collider == null:
+				return {}
+			skip.append(collider.get_rid())
+			continue
+		return hit
+	return {}
+
+
+## What a surface is called, for the answer ("on the table", "on the floor").
+func _surface_name(hit: Dictionary) -> String:
+	var n := hit.get("collider") as Node
+	while n != null and not n.is_in_group("spawned"):
+		n = n.get_parent()
+	if n == null:
+		return "on the floor" if (hit["position"] as Vector3).y <= global_position.y + 0.15 else "on a surface"
+	var type_name := str(n.get_class())
+	var script: Script = n.get_script()
+	if script != null and not str(script.get_global_name()).is_empty():
+		type_name = str(script.get_global_name())
+	return "on %s" % WorldView.label_of({"node": str(n.name), "type": type_name})
 
 
 ## Walk to a point; the result of the walk ({ok, detail}). The routines use this, so that they do not cancel themselves.
+## A walk of a routine's does not end following: they were asked to follow, and go on after (while the routine runs they do not).
 func walk_to(point: Vector3) -> Dictionary:
-	return await _move({"x": point.x, "y": point.y, "z": point.z})
+	var was_following := _follow
+	var result: Dictionary = await _move({"x": point.x, "y": point.y, "z": point.z})
+	_follow = was_following
+	return result
 
 
 ## A picture from their eyes toward `point` (see the summoner's `_take_picture`): {ok, jpeg_b64}; {ok: false} when
@@ -1247,7 +1642,7 @@ func is_turning() -> bool:
 ## Start turning on the spot to heading `yaw` with the skin's turn clip, as much of it as the turn needs. False (and
 ## nothing done) when the turn is small, they are busy, or the skin has no such clip: the caller then eases or snaps.
 func begin_turn(yaw: float) -> bool:
-	if _puppet == null or _turning or _one_shot != "":
+	if _puppet == null or _turning or _one_shot != "" or _seated_or_crouched():
 		return false
 	var diff := wrapf(yaw - rotation.y, -PI, PI)
 	if absf(rad_to_deg(diff)) < TURN_MIN_DEG:
@@ -1256,7 +1651,7 @@ func begin_turn(yaw: float) -> bool:
 	if not bool(_puppet.call("has_clip", clip)):
 		return false
 	var seconds := float(_puppet.call("clip_time_for_yaw", clip, absf(rad_to_deg(diff))))
-	if seconds < 0.2:
+	if seconds < TURN_MIN_SECONDS:
 		return false
 	_turn_gained = deg_to_rad(float(_puppet.call("clip_yaw", clip, seconds)))
 	_turn_left = seconds
@@ -1295,10 +1690,34 @@ func _cancel_turn() -> void:
 	_anim_state = ""
 
 
-## Standing: what is left of a turn after the clip, or a small one, is eased (about a third of a second).
+## A seated or crouching body has no standing turn to play: the skin's turn clips are a person on their feet.
+func _seated_or_crouched() -> bool:
+	return _karada_state in ["sit", "crouch"]
+
+
+## Whether a turn of this size has a clip to show it: the skin has the clip for that side and the turn is worth one.
+## What it has not is eased (a capsule, a skin without turns, a seat), and what it only has to wait for (a clip that
+## is playing) is not: that one must not swivel meanwhile.
+func _turn_has_clip(yaw: float) -> bool:
+	if _puppet == null or _seated_or_crouched():
+		return false
+	var diff := wrapf(yaw - rotation.y, -PI, PI)
+	if absf(rad_to_deg(diff)) < TURN_MIN_DEG:
+		return false
+	return bool(_puppet.call("has_clip", "turn_left" if diff > 0.0 else "turn_right"))
+
+
+## Standing: a turn is the skin's turn clip, from the server's skin; only what has no clip to show it (a small
+## remainder, a seat, a skin without turns) is eased (about a third of a second). A turn asked while another clip
+## plays (a greeting, an emote) waits for it to end and then plays, instead of swivelling under it.
 func _ease_facing(delta: float) -> void:
 	if is_nan(_face_goal):
 		return
+	if _turn_has_clip(_face_goal):
+		if _one_shot == "" and begin_turn(_face_goal):
+			return
+		if _one_shot != "":
+			return
 	rotation.y = lerp_angle(rotation.y, _face_goal, minf(1.0, 8.0 * delta))
 	if absf(wrapf(_face_goal - rotation.y, -PI, PI)) < deg_to_rad(0.5):
 		rotation.y = _face_goal
@@ -1320,32 +1739,6 @@ func _look_at(payload: Dictionary) -> Dictionary:
 	_face_point(hit["position"])
 	_study(hit)
 	return {"ok": true, "detail": "looking at %s" % str(hit.get("label", "it"))}
-
-
-## Turn to it and say what it is. Nothing about a screen's picture yet: that is not built.
-func _inspect(payload: Dictionary) -> Dictionary:
-	var hit := _resolve(payload)
-	if hit.is_empty():
-		return {"ok": false, "detail": "nothing called '%s' that you can see" % str(payload.get("target", ""))}
-	var pos: Vector3 = hit["position"]
-	_face_point(pos)
-	_study(hit)
-	var bearing := SummonerView.bearing_deg(global_position, heading(), pos)
-	var dist := Vector2(pos.x - global_position.x, pos.z - global_position.z).length()
-	var bits: PackedStringArray = []
-	if str(hit.get("type", "")) == "player":
-		bits.append("a person")
-	else:
-		bits.append(str(hit.get("type", "something")))
-	if str(hit.get("systemid", "")) != "":
-		bits.append("a %s machine" % str(hit["systemid"]))
-	if hit.has("powered"):
-		bits.append("switched on" if bool(hit["powered"]) else "switched off")
-	var text := "%s: %s, %.1f m away, %s." % [str(hit.get("label", "it")), ", ".join(bits), dist,
-		SummonerView.side_words(bearing)]
-	print("[Rift] inspect: %s" % text)
-	return {"ok": true, "detail": text, "data": {"label": hit.get("label", ""), "type": hit.get("type", ""),
-		"distance": snappedf(dist, 0.1), "powered": hit.get("powered", null)}}
 
 
 func _look(payload: Dictionary) -> Dictionary:
@@ -1390,13 +1783,15 @@ func _move(payload: Dictionary) -> Dictionary:
 	if not (point is Vector3):
 		return {"ok": false, "detail": "no_target: nothing called '%s'" % str(payload.get("target", ""))}
 	_follow = false  # an explicit walk ends following
+	_follow_walk = false
 	var dest: Vector3 = point
+	var free := bool(payload.get("free", false))   # an exploration leg: no leash (the floor under it is checked instead)
 	var from_anchor := Vector3(dest.x - anchor.x, 0.0, dest.z - anchor.z)
-	if from_anchor.length() > LEASH:
+	if not free and from_anchor.length() > LEASH:
 		return {"ok": false, "detail": "too_far_from_the_summoner (limit %.0f m)" % LEASH}
 	if _goal != null:
 		_end_walk(false, "replaced")
-	_begin_walk(dest)
+	_begin_walk(dest, free)
 	if _path.is_empty() and not _path_complete:
 		# Nothing to walk along: boxed in. Say so rather than push at the wall for two seconds.
 		_end_walk(false, "no_way_round: nothing leads from here toward it")

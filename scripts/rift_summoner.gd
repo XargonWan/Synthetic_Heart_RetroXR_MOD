@@ -37,12 +37,15 @@ const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const AssetFetcher := preload("res://mods/xenu.synth_rift/scripts/asset_fetcher.gd")
 const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
+const Use := preload("res://mods/xenu.synth_rift/scripts/synth_use.gd")
 const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
-const MOD_VERSION := "0.15.0"
+const MOD_VERSION := "0.18.0"
 const STATE_INTERVAL := 1.0
+## A change of the body's settled flag goes out at once, but not more often than this (a flicker is not news).
+const SETTLED_EDGE_MIN_GAP := 0.3
 ## At most this many changes in the room are told per look, and how much they matter to them.
 ## A thing that stops existing is told as gone only after this long: it may only have been moved.
 const GONE_DELAY_SECONDS := 20.0
@@ -118,6 +121,8 @@ var _resumed := false
 var _resumed_from := ""
 var _pulse := 0.0
 var _state_clock := 0.0
+## Was the body settled at the last look: a change of it is sent at once, not at the next STATE_INTERVAL.
+var _was_settled := true
 var _player_near := false
 var _greet_cooldown := 0.0
 var _status := "Off"
@@ -404,6 +409,7 @@ func _on_opened(welcome: Dictionary) -> void:
 	# think of a greeting, which is held (text and voice) until they step out, instead of the player waiting for it then.
 	_tell_synth_she_was_summoned()
 	var assets: Dictionary = welcome.get("assets", {}) if welcome.get("assets") is Dictionary else {}
+	RiftSettings.set_synth_name(str(assets.get("name", "")))
 	print("[Rift] welcomed; skin=%s, animations offered=%s" % [
 		str(assets.get("skin", "?")), str((assets.get("animations", {}) as Dictionary).keys())])
 	_set_status("Rift open: charging ...", false)
@@ -426,7 +432,13 @@ func _process(delta: float) -> void:
 	if _greet_cooldown > 0.0:
 		_greet_cooldown -= delta
 	_state_clock += delta
-	if _state_clock >= STATE_INTERVAL:
+	var settled_now: bool = _body.settled()
+	if settled_now != _was_settled and _state_clock >= SETTLED_EDGE_MIN_GAP:
+		# Told at once: the server's next beat waits on this, and a second of lag is dead time on every action.
+		_was_settled = settled_now
+		_state_clock = 0.0
+		_link.send_frame(_state_frame())
+	elif _state_clock >= STATE_INTERVAL:
 		_state_clock = 0.0
 		_link.send_frame(_state_frame())
 		_check_player()
@@ -454,8 +466,11 @@ func _arrive() -> void:
 		return
 	_body.world_lookup = Callable(self, "_lookup_entity")
 	_body.sight = Callable(self, "_placed_entities")
+	_body.line_of_sight = Callable(self, "_line_of_sight_from")
+	_body.room_name = _room_id()
 	_body.picture_taker = Callable(self, "_take_picture")
 	_body.routine_done.connect(_on_routine_done)
+	_body.follow_lost.connect(_on_follow_lost)
 	_body.set_fetcher(_fetcher)
 	_body.hold_speech = true   # their voice waits for them to be out of the pod
 	for early: Dictionary in _early_audio:
@@ -562,7 +577,9 @@ func _on_player_spoke(wav: PackedByteArray) -> void:
 		_body.heard(false, "", "stt_failed")
 		return
 	_clip_ids += 1
-	var sent := _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
+	# _link is a Node (its methods are dynamic), so the result is a Variant: ':=' cannot infer it and the whole script
+	# fails to parse, which left the Rift Summoner unable to spawn (2026-11-05).
+	var sent: bool = _link.send_frame(Protocol.audio(_clip_ids, wav, PLAYER_NAME))
 	print("[Rift] the player spoke: clip %d, %d bytes, sent=%s" % [_clip_ids, wav.size(), str(sent)])
 	if not sent:
 		_body.heard(false, "", "stt_failed")
@@ -957,10 +974,10 @@ func _entities() -> Array:
 				"title": str(title) if title is String else "", "machine": machine}}
 		if str(entry["type"]).is_empty():
 			entry["type"] = WorldView.UNKNOWN
-		if n3.has_method("is_powered_on"):
-			entry["powered"] = bool(n3.call("is_powered_on"))
-		elif n3.has_method("is_on"):
-			entry["powered"] = bool(n3.call("is_on"))
+		# A TV says it by a method, a console by a property (`is_powered_on`): it was a method only, so a console never said.
+		var powered: Variant = Use.power_state(n3)
+		if powered != null:
+			entry["powered"] = bool(powered)
 		if sid is String and not String(sid).is_empty():
 			entry["systemid"] = sid
 		if str(title) != "" and title is String:
@@ -1059,7 +1076,11 @@ func _json_entities(placed: Array) -> Array:
 
 
 func _state_frame() -> Dictionary:
-	return Protocol.state(_body.global_position, _body.holding(), {"entities": _json_entities(_placed_entities())})
+	return Protocol.state(_body.global_position, _body.holding(), {
+		"entities": _json_entities(_placed_entities()),
+		"body": Protocol.body_status(_body.settled(), _body.is_busy(), _body.is_speaking()),
+		"following": _body.is_following(),
+	})
 
 
 ## What they did on their own is over: Synth is told how it went, as a turn of its own (a search that found the thing,
@@ -1072,6 +1093,21 @@ func _on_routine_done(kind: String, ok: bool, summary: String, data: Dictionary)
 	# ("I'll go and look around" after it had looked around) and start the same routine a second time.
 	var told := "%s [This is only the result of what you set off. The player's last message was already answered: tell them how it went in a sentence or two, and do not start it again unless they ask.]" % summary
 	_link.send_frame(Protocol.event("%s_done" % kind, told, "", ROUTINE_SALIENCE, data))
+	_link.send_frame(_state_frame())
+
+
+## They were following the player and cannot: told as a fact, once (see SynthBody.follow_lost). They are still following,
+## and say so; what to do about it (call out, wait, stop) is the model's.
+func _on_follow_lost(reason: String) -> void:
+	if _link == null:
+		return
+	var text := "You are following the player and you cannot keep up."
+	match reason:
+		"too_far":
+			text = "You are following the player but they are further away than you may go from where you came in: you are waiting at the edge. You are still following."
+		"blocked":
+			text = "You are following the player but you could not get to them: something is in the way. You are still following and will try again."
+	_link.send_frame(Protocol.event("follow_lost", text, "", ROUTINE_SALIENCE, {"reason": reason, "following": true}))
 	_link.send_frame(_state_frame())
 
 

@@ -25,10 +25,23 @@ func _init() -> void:
 	_room()
 	_resume()
 	_chat_memory()
+	_synth_name()
 	_screen()
 	print("[rift-tests] %d cases, %d failed" % [_count, _failed])
 	# A suite that ran nothing (a script that did not compile) is not a pass.
 	quit(1 if _failed > 0 or _count == 0 else 0)
+
+
+## The chat labels them with what the server calls them, and falls back to SyntH when none was offered.
+func _synth_name() -> void:
+	var before := RiftSettings.synth_name()
+	RiftSettings.set_synth_name("")
+	_check(RiftSettings.synth_name() == "SyntH", "no name offered: SyntH")
+	RiftSettings.set_synth_name("  Rei ")
+	_check(RiftSettings.synth_name() == "Rei", "the offered name, trimmed")
+	RiftSettings.set_synth_name("")
+	_check(RiftSettings.synth_name() == "SyntH", "a server that stops offering one brings the default back")
+	RiftSettings.set_synth_name("" if before == "SyntH" else before)
 
 
 func _check(ok: bool, what: String) -> void:
@@ -66,8 +79,12 @@ func _urls() -> void:
 func _verbs() -> void:
 	for verb: String in ["say", "move", "look", "use", "follow", "unfollow", "status",
 			"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
-			"search", "explore", "watch", "bring", "stop"]:
+			"search", "explore", "watch", "bring", "stop", "survey", "look_around"]:
 		_check(Protocol.is_known_verb(verb), "%s is a verb" % verb)
+	# the two the core sends to build a walk are accepted, declared, and kept out of what the model is offered
+	for verb: String in Protocol.INTERNAL_VERBS:
+		_check(Protocol.IMPLEMENTED_VERBS.has(verb), "%s is declared in the hello" % verb)
+		_check(not Protocol.CORE_VERBS.has(verb) and not Protocol.WORLD_VERBS.has(verb), "%s is neither a core nor a world verb" % verb)
 	# The body never plays: nothing that reaches a console is a verb.
 	for verb: String in ["press_button", "play", "set_input", "attack", "respawn", "", "Say", "say "]:
 		_check(not Protocol.is_known_verb(verb), "'%s' must not be a verb" % verb)
@@ -87,6 +104,8 @@ func _frames() -> void:
 	var st: Dictionary = Protocol.state(Vector3(1.234, 0, -2.0), "cart", {"entities": []})
 	_eq(st["state"]["position"], {"x": 1.23, "y": 0.0, "z": -2.0}, "state position rounds")
 	_eq(st["state"]["holding"], "cart", "state holding")
+	var with_body: Dictionary = Protocol.state(Vector3.ZERO, "", {"body": Protocol.body_status(false, true, true)})
+	_eq(with_body["state"]["extra"]["body"], {"settled": false, "busy": true, "speaking": true}, "state carries the body's status")
 
 	var res: Dictionary = Protocol.result(7, false, "blocked", {"n": 1})
 	_eq([res["id"], res["ok"], res["detail"]], [7, false, "blocked"], "result fields")
@@ -264,6 +283,8 @@ func _chat_memory() -> void:
 
 func _screen() -> void:
 	_check("turn_left" in Protocol.WANTED_ANIMATIONS and "turn_right" in Protocol.WANTED_ANIMATIONS, "the hello asks for both turns")
+	_check("give" in Protocol.WANTED_ANIMATIONS, "the hello asks for the pose of holding something out")
+	_check(Protocol.IMPLEMENTED_VERBS.has("combine") and Protocol.CORE_VERBS.has("combine") and Protocol.is_known_verb("combine"), "combine is a verb they know and carry out")
 	_eq(View.body_screen(0), "BODY MATERIALIZATION\n[------------] 0%", "the body bar at nothing")
 	_eq(View.body_screen(50), "BODY MATERIALIZATION\n[######------] 50%", "at half")
 	_eq(View.body_screen(100), "BODY MATERIALIZATION\n[############] 100%", "and full")

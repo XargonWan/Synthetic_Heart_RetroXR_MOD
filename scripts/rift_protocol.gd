@@ -12,14 +12,22 @@ const SOCKET_PATH := "/api/vessel/retroxr/ws"
 
 ## Verbs Synth may ask for. Anything else is answered "unknown_verb": the body
 ## never plays, and nothing here writes input to a console.
-const CORE_VERBS: Array[String] = ["say", "move", "look", "use", "follow", "unfollow", "status"]
+const CORE_VERBS: Array[String] = ["say", "move", "look", "use", "follow", "unfollow", "status",
+	# One thing put into or onto another (a cartridge in a console). Opt-in on the server: a world must declare it.
+	"combine"]
 const WORLD_VERBS: Array[String] = [
 	"look_at", "touch", "pick_up", "put_down", "hand_over", "sit", "emote", "inspect",
 	# What they do on their own once asked; the result comes later, as an event (SynthRoutines).
 	"search", "explore", "watch", "bring", "stop",
+	# Working a machine: switch it on or off, volume, rewind, eject, a cartridge or tape put in. Never a game (SynthUse).
+	"operate",
 ]
+## Verbs only the CORE sends, to build a walk (plugins/rift_vessel/exploration.py): `survey` answers what can be walked to,
+## what is out of sight and what is in the way; `look_around` turns on the spot and names what comes into view. The model is
+## never offered them (Synth's connector does not list them) and never asks for them; they are accepted here all the same.
+const INTERNAL_VERBS: Array[String] = ["survey", "look_around"]
 ## Animations RetroXR will ask the skin for (the body is idle until it has them).
-const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_right", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch"]
+const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_right", "talk", "think", "greet", "write", "computer", "touch", "sit", "gaming", "crouch", "give"]
 
 
 ## What this mod can really carry out. Synth is shown ONLY these (the hello says so): a verb they are
@@ -27,12 +35,13 @@ const WANTED_ANIMATIONS: Array[String] = ["idle", "walk", "turn_left", "turn_rig
 ## Add a verb here when SynthBody.act does it, and not before.
 const IMPLEMENTED_VERBS: Array[String] = [
 	"say", "move", "look", "status", "follow", "unfollow", "look_at", "inspect", "emote",
-	"search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop",
+	"search", "explore", "watch", "pick_up", "put_down", "hand_over", "bring", "stop", "operate", "combine",
+	"survey", "look_around",
 ]
 
 
 static func is_known_verb(verb: String) -> bool:
-	return CORE_VERBS.has(verb) or WORLD_VERBS.has(verb)
+	return CORE_VERBS.has(verb) or WORLD_VERBS.has(verb) or INTERNAL_VERBS.has(verb)
 
 
 ## "http://host:8080", "https://host", "ws://host:8080/" or a bare "host:8080"
@@ -184,6 +193,13 @@ static func state(position: Vector3, holding: String, extra: Dictionary) -> Dict
 		"type": "state",
 		"state": {"position": vec(position), "holding": holding, "extra": extra},
 	}
+
+
+## What the body is doing, for the `state` frame's `extra.body`: the server holds its next "what do you want to do?"
+## until `settled`, so a beat never lands on an action still playing nor waits long after it ended. Older servers
+## ignore the field, and a server that does not get it counts the body as settled.
+static func body_status(settled: bool, busy: bool, speaking: bool) -> Dictionary:
+	return {"settled": settled, "busy": busy, "speaking": speaking}
 
 
 static func result(id: int, ok: bool, detail: String = "", data: Dictionary = {}) -> Dictionary:

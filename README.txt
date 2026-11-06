@@ -18,6 +18,7 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `scripts/vrm_face.gd` their face: the WebUI's FacialDriver (blink, emotion layers, mouth from their voice's loudness)
 - `scripts/world_view.gd` what a thing in the room is called for a person (`unknown item`, never empty) and what is in their view (180 degrees, not hidden)
 - `scripts/synth_routines.gd` what they do on their own once asked: search, explore, watch, fetch; the model is told afterwards
+- `scripts/synth_use.gd` what they may do to a machine with their hands (`operate`: power, volume, rewind, eject, cartridge or tape in) and the words that ask for it; a request for a game is refused with the reason
 - `scripts/karada_puppet.gd` their VRM + Mixamo clips retargeted by hand, their gaze, the crossfade between clips, a descriptor's loop window and the upper-body layer (`mask`)
 - `assets/` the Synth logo (no text) for the pod's flanks, and its glow map
 - `scripts/voice_recorder.gd` the player's voice for Synth: joins the `Microphone` service's consumers only while the chat page's mic is on, sends a WAV (`audio` frame), gets the words back (`transcript`)
@@ -27,5 +28,5 @@ excludes), so this folder is its own git repository. The Synth half lives in
 - `tests/rift_harness.py` + `tests/e2e_probe.gd` the mod against Synth's real rift socket
 
 Built: socket, handshake, their own body from the Karada skin, voice and lip movement, blink and
-face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with their hands, looking for things, carrying them to you, watching the TV (with a picture, which can be switched off in the pod's menu), speaking to them with the chat page's mic (Synth transcribes it with Auris), and room changes told quietly (what merely leaves their view, and cords, are not news).
-Not built: picking up objects, screens, touch.
+face, a chat page, looking at things, walking to them, sightings of what changes in the room, sitting / crouching / playing with their hands, looking for things, carrying them to you and holding them out (both hands, for as long as she chooses; if you do not take it she keeps it), setting them down on a table or the floor, putting one thing into another (`combine`), following you (and telling Synth when she cannot keep up), working machines (switch a TV or console on or off, volume, rewind, eject, a cartridge or tape put in or taken out; never playing), every turn on the spot as the skin's turn clip, watching the TV (with a picture, which can be switched off in the pod's menu), speaking to them with the chat page's mic (Synth transcribes it with Auris), and room changes told quietly (what merely leaves their view, and cords, are not news).
+Not built: screens, touch, sitting on a chosen seat.
