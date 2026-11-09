@@ -255,6 +255,7 @@ func _process(_delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	_update_gaze(delta)
 	_carry(delta)
+	_carry_extra(delta)
 	if idle_curiosity_on:
 		routines.idle_curiosity(delta, is_speaking())
 	if _bubble_left > 0.0:
@@ -1344,6 +1345,12 @@ const CARRY_FLIGHT_ARC := 0.08
 var _carry_from := Vector3.ZERO
 var _carry_t := 1.0
 var _held_saved: Dictionary = {}
+## They hold ONE thing at a time. The only exception is putting two things together (a cartridge into the console they hold):
+## the console stays the one in their hands and the cartridge is a SECOND thing, held only for as long as that takes. It is
+## put into the slot, or set down if it does not go in: nothing is left holding two.
+var _extra: Node3D = null
+var _extra_name := ""
+var _extra_saved: Dictionary = {}
 
 
 func holding() -> String:
@@ -1447,6 +1454,106 @@ func can_hold(node: Node3D) -> bool:
 	return lift_refusal(node) == ""
 
 
+## The second thing, while two are being put together ("" when there is none).
+func extra_holding() -> String:
+	return _extra_name if _extra != null and is_instance_valid(_extra) else ""
+
+
+func extra_node() -> Node3D:
+	return _extra if _extra != null and is_instance_valid(_extra) else null
+
+
+## Take a SECOND thing in the hands that already hold one, for putting the two together. Refused (false) with empty hands (then
+## it is not a second thing: `hold`), when a second one is already held, and for what cannot be lifted.
+func hold_extra(node: Node3D, label: String) -> bool:
+	if _held == null or _extra != null or node == _held or not can_hold(node):
+		return false
+	var rb := node as RigidBody3D
+	_extra_saved = {"freeze": rb.freeze, "layer": rb.collision_layer, "mask": rb.collision_mask}
+	if "release_mode" in rb:
+		_extra_saved["release_mode"] = rb.get("release_mode")
+		rb.set("release_mode", 0)
+	rb.freeze = true
+	rb.collision_layer = 0
+	rb.collision_mask = 0
+	_extra = rb
+	_extra_name = label
+	print("[Rift] they take %s as well, to put it together with %s" % [label, _held_name])
+	return true
+
+
+## Let go of the second thing WHERE IT IS, handing it back to what takes it (the slot it goes into).
+func release_extra() -> Node3D:
+	if _extra == null:
+		return null
+	var node := _extra
+	if is_instance_valid(node):
+		var rb := node as RigidBody3D
+		rb.collision_layer = int(_extra_saved.get("layer", rb.collision_layer))
+		rb.collision_mask = int(_extra_saved.get("mask", rb.collision_mask))
+		rb.freeze = bool(_extra_saved.get("freeze", false))
+		if _extra_saved.has("release_mode") and "release_mode" in rb:
+			rb.set("release_mode", _extra_saved["release_mode"])
+		rb.linear_velocity = Vector3.ZERO
+		rb.angular_velocity = Vector3.ZERO
+	print("[Rift] they let go of %s (the second thing)" % _extra_name)
+	_extra = null
+	_extra_name = ""
+	return node if is_instance_valid(node) else null
+
+
+## Set the second thing down on what is under their hands (it did not go in): {ok, where}, the same as `put_down`.
+func put_down_extra() -> Dictionary:
+	if _extra == null:
+		return {"ok": false, "where": ""}
+	var base := _held
+	var base_name := _held_name
+	var base_saved := _held_saved
+	_held = _extra
+	_held_name = _extra_name
+	_held_saved = _extra_saved
+	var done := put_down()
+	_held = base
+	_held_name = base_name
+	_held_saved = base_saved
+	_extra = null
+	_extra_name = ""
+	_refresh_anim()
+	return done
+
+
+## What they held was taken away (by the player) or is gone: the second thing, if there is one, is what they hold now.
+func _promote_extra() -> void:
+	if _extra == null:
+		return
+	if is_instance_valid(_extra):
+		_held = _extra
+		_held_name = _extra_name
+		_held_saved = _extra_saved
+		_carry_from = _held.global_position
+		_carry_t = 0.0
+	_extra = null
+	_extra_name = ""
+
+
+func _carry_extra(delta: float) -> void:
+	if _extra == null:
+		return
+	if not is_instance_valid(_extra):
+		_extra = null
+		_extra_name = ""
+		return
+	if _extra.has_method("is_picked_up") and bool(_extra.call("is_picked_up")):
+		print("[Rift] the player took %s from their hands" % _extra_name)
+		if _extra_saved.has("release_mode") and "release_mode" in _extra:
+			_extra.set("release_mode", _extra_saved["release_mode"])
+		_extra = null
+		_extra_name = ""
+		return
+	var want := hand_point() + global_basis.x * 0.14 + Vector3.UP * 0.06
+	_extra.global_position = _extra.global_position.lerp(want, minf(1.0, 10.0 * delta))
+
+
 func hold(node: Node3D, label: String) -> bool:
 	if _held != null or not can_hold(node):
 		return false
@@ -1480,6 +1587,7 @@ func _carry(delta: float) -> void:
 	if not is_instance_valid(_held):
 		_held = null
 		_held_name = ""
+		_promote_extra()
 		_refresh_anim()
 		return
 	if _held.has_method("is_picked_up") and bool(_held.call("is_picked_up")):
@@ -1489,6 +1597,7 @@ func _carry(delta: float) -> void:
 			_held.set("release_mode", _held_saved["release_mode"])
 		_held = null
 		_held_name = ""
+		_promote_extra()
 		_refresh_anim()
 		return
 	var want := hand_point()

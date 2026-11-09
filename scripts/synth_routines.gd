@@ -463,9 +463,12 @@ func _inspect(query: String, mine: int) -> void:
 		refusal = str(body.lift_refusal(node))
 	var already: bool = body.holding() != "" and body.holding() == str(hit.get("name", ""))
 	var liftable := refusal == "" and not already
+	# One thing at a time: to take this one, what they hold is set down first (and the answer says so).
+	var set_down := ""
 	if liftable and body.holding() != "":
-		var set_down: String = body.holding()
-		body.put_down()
+		set_down = body.holding()
+		var where: Dictionary = body.put_down()
+		set_down = "%s %s" % [set_down, str(where.get("where", ""))]
 		print("[Rift] inspect: set %s down to take %s" % [set_down, label])
 	# Go over to it: within grabbing reach to take it, or a little way off when it stays where it is. Already within reach
 	# (a VCR on a table they cannot walk up to) = no walk at all.
@@ -491,6 +494,8 @@ func _inspect(query: String, mine: int) -> void:
 	if str(hit.get("title", "")) != "":
 		bits.append("%s is on it" % str(hit["title"]))
 	var text := "You went over to %s and looked at it closely: %s." % [label, ", ".join(bits)]
+	if set_down != "":
+		text = "You set %s down first: you hold one thing at a time. %s" % [set_down, text]
 	if taken or already:
 		text += " You are holding it now (put it down or hand it over whenever you like)."
 	elif refusal != "":
@@ -503,10 +508,15 @@ func _inspect(query: String, mine: int) -> void:
 ## with report=false, so a thing that could not be lifted (or found, or reached) ended it with NO result at all: the model
 ## heard nothing, the routine stayed "running" for ever and the model asked for it again, three times in one real session.
 ## `report_success`: a pick_up ends with the result; a bring goes on to hand the thing over.
-func _pick_up(query: String, mine: int, report: bool, kind: String = "pick_up", report_success: bool = true) -> bool:
-	if body.holding() != "":
+## `as_extra`: take it as a SECOND thing, in hands that already hold one (putting two things together); only `_operate_insert` asks.
+func _pick_up(query: String, mine: int, report: bool, kind: String = "pick_up", report_success: bool = true, as_extra: bool = false) -> bool:
+	if body.holding() != "" and not as_extra:
 		if report:
 			_finish(mine, kind, false, "Your hands are full: you are holding %s." % body.holding())
+		return false
+	if as_extra and body.extra_holding() != "":
+		if report:
+			_finish(mine, kind, false, "Your hands are full: you are holding %s and %s." % [body.holding(), body.extra_holding()])
 		return false
 	var hit := await _acquire(query, mine, report, kind)
 	if hit.is_empty():
@@ -542,7 +552,7 @@ func _pick_up(query: String, mine: int, report: bool, kind: String = "pick_up", 
 			return false
 		if not await _wait(1.2, mine):
 			return false
-	if not body.hold(node, str(hit["name"])):
+	if not (body.hold_extra(node, str(hit["name"])) if as_extra else body.hold(node, str(hit["name"]))):
 		if report:
 			_finish(mine, kind, false, "You could not take %s." % str(hit["name"]))
 		return false
@@ -803,23 +813,30 @@ func _operate_insert(query: String, with_name: String, held: Node3D, mine: int, 
 	if why != "":
 		_finish(mine, kind, false, "You cannot put %s in %s: %s." % [media_label, host_label, why])
 		return
-	# A loose one is taken first (their hands must be free for it; what they hold is the machine's, then, not the thing's).
+	# A loose one is taken first. They hold ONE thing at a time, and putting two together is the one exception: with the machine in
+	# their hands, the thing is a SECOND thing held for as long as it takes; with anything else in their hands it must be set down.
+	var as_extra := false
 	if media != held:
 		if held != null and held != host:
-			_finish(mine, kind, false, "Your hands are full: you are holding %s. Put it down first." % body.holding())
+			_finish(mine, kind, false, "Your hands are full: you are holding %s. Put it down first (you can only hold one thing at a time, apart from the two you put together)." % body.holding())
 			return
-		if held != null and held == host:
-			_finish(mine, kind, false, "Your hands are full with %s, the machine itself: put it down first, then put %s in it." % [host_label, media_label])
+		as_extra = held != null and held == host
+		if not await _pick_up(str(media_hit.get("name", media_label)), mine, true, kind, false, as_extra):
 			return
-		if not await _pick_up(str(media_hit.get("name", media_label)), mine, true, kind, false):
-			return
-		held = body.held_node()
-		if held != media:
+		var taken: Node3D = body.extra_node() if as_extra else body.held_node()
+		if taken != media:
+			if as_extra:
+				body.put_down_extra()
 			_finish(mine, kind, false, "You could not pick up %s." % media_label)
 			return
+		if not as_extra:
+			held = taken
 	if host != held and not await _reach_for_use(host_hit, host, host_label, held, mine, kind):
 		return
-	body.release_held()
+	if as_extra:
+		body.release_extra()
+	else:
+		body.release_held()
 	var result := Use.insert(host, media)
 	if not bool(result.get("ok", false)):
 		_finish(mine, kind, false, "You could not put %s in %s: %s." % [media_label, host_label, str(result.get("detail", ""))])

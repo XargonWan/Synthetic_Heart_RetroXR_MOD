@@ -153,10 +153,23 @@ func _ready() -> void:
 	r = await _run("operate", {"interaction": "insert", "target": "Game Boy", "with": "Zelda"})
 	_check(r != null and not r["ok"] and str(r["summary"]).contains("already has"), "a console with a cartridge in it takes no second one (%s)" % _text(r))
 	gb.cart = null   # (taken out by hand)
-	r = await _run("operate", {"interaction": "insert", "target": "Game Boy", "with": "Tetris"})
-	_check(r != null and not r["ok"] and str(r["summary"]).contains("hands are full"), "hands full of the console: told to put it down first (%s)" % _text(r))
-	gb.cart = mario
+	# ONE thing at a time, except putting two together: with the console in their hands the cartridge is a second thing,
+	# held only for as long as it takes, and it goes in; the console stays in their hands.
+	r = await _run("operate", {"interaction": "insert", "target": "Game Boy", "with": "Tetris"}, 60.0)
+	_check(r != null and r["ok"] and gb.cart == tetris, "the console in their hands and the cartridge fetched as a second thing: it goes in (%s)" % _text(r))
+	_check(_body.holding() == "Game Boy" and _body.extra_holding() == "", "and they hold the console and nothing else (holding '%s', second '%s')" % [_body.holding(), _body.extra_holding()])
+	# anything else in their hands must be set down first
+	gb.cart = null
 	_body.put_down()
+	await get_tree().physics_frame
+	var held_other: bool = _body.hold(zelda, "Zelda")
+	_check(held_other, "(control) they hold the Zelda cartridge")
+	r = await _run("operate", {"interaction": "insert", "target": "Game Boy", "with": "Tetris"})
+	_check(r != null and not r["ok"] and str(r["summary"]).contains("hands are full") and _body.extra_holding() == "", "holding something unrelated: told to put it down first, no second thing taken (%s)" % _text(r))
+	_check(not _body.hold_extra(tetris, "Tetris") or _body.holding() == "Zelda", "(control) a second thing is only taken in a combination, never on its own")
+	_body.release_extra()
+	_body.put_down()
+	gb.cart = mario
 	await get_tree().physics_frame
 
 	# ── a cartridge that is in a console is taken out before it is carried ──
