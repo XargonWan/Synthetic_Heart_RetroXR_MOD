@@ -76,7 +76,7 @@ const HELD_TRANSPARENCY := 0.65
 ## flash solid in front of the face on its way down.
 const GHOST_SETTLE := 0.6
 const GHOST_SPEED := 0.15
-## The base on the floor, for the yellow rectangle: the feet reach about 0.75 m from the middle.
+## The base on the floor, for the yellow rectangle: the base ring reaches about 0.57 m from the middle.
 const FOOTPRINT := Vector2(1.3, 1.3)
 ## Standing it upright again: the fraction of the tilt corrected each second, and the most it
 ## turns at, radians a second (an arcade cabinet's numbers). Under UPRIGHT_EPS it rests.

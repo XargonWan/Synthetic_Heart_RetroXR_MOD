@@ -2,7 +2,7 @@
 ##
 ## Built in code from primitives (nothing downloaded, nothing to credit): a gunmetal
 ## cylinder open down its front like a booth, a hood over the opening, a glowing
-## floor pad, a ribbed strip up one side and a foot behind. The inside glows in
+## floor pad, a ribbed strip up one side. The inside glows in
 ## the lamp colour (red off, amber waiting, green open), the colour the Summoner's
 ## status already uses, plus a beam that only stands while the rift is open.
 ##
@@ -22,7 +22,7 @@ const BASE_Y := 0.02 * SIZE
 ## The origin is on the floor, in the middle of the base: that is where GroundPlacement
 ## stands a thing, as it does an arcade cabinet.
 const FLOOR_Y := 0.0
-## What the whole pod stands on: feet to hood, in metres.
+## What the whole pod stands on: floor to hood, in metres.
 const TOTAL_HEIGHT := 0.34 * SIZE
 const SYNTH_CYAN := Color(0.43, 1.0, 1.0)
 ## The grey of Synth's logo and banner (35, 35, 36): the pod's shell and the background of the
@@ -76,16 +76,8 @@ static func build(host: Node3D) -> Dictionary:
 	# The hood over the opening, and the sill under it.
 	_part(host, "Hood", _cylinder(R_OUT + 0.004 * SIZE, 0.035 * SIZE), shell_mat, Vector3(0, y1 + 0.0175 * SIZE, 0))
 	_part(host, "Sill", _cylinder(R_OUT + 0.004 * SIZE, 0.02 * SIZE), shell_mat, Vector3(0, y0 - 0.01 * SIZE, 0))
-	# The base ring the feet hang from.
+	# The base ring: the pod stands on it alone, with nothing sticking out (it is carried and put down by its base).
 	_part(host, "Base", _cylinder(0.088 * SIZE, 0.02 * SIZE), shell_mat, Vector3(0, BASE_Y - 0.01 * SIZE, 0))
-
-	# One foot, behind, canted outward. The two splayed ones at the front corners stuck out of the sides like stiff
-	# outriggers (and the Summoner is a thing carried and put down by its base: nothing there should catch).
-	var foot_angle := deg_to_rad(180.0)
-	var foot := _part(host, "Foot0", _box(Vector3(0.05, 0.012, 0.075) * SIZE), shell_mat)
-	foot.position = Vector3(sin(foot_angle) * 0.098 * SIZE, FLOOR_Y + 0.016 * SIZE, -cos(foot_angle) * 0.098 * SIZE)
-	foot.rotation = Vector3(0, foot_angle, 0)
-	foot.rotate_object_local(Vector3.RIGHT, deg_to_rad(-22.0))
 
 	# A ribbed strip up the back, like a scale (the flanks wear the logo).
 	var ribs := _part(host, "Ribs", _ribs(), trim_mat, Vector3.ZERO)
