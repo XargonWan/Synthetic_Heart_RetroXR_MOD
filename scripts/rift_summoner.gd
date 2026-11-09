@@ -39,6 +39,7 @@ const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.
 const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.gd")
 const Use := preload("res://mods/xenu.synth_rift/scripts/synth_use.gd")
 const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
+const SynthWatching := preload("res://mods/xenu.synth_rift/scripts/synth_watching.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
@@ -141,6 +142,9 @@ var _skin_loading := false
 var _presence := ""
 ## The ids of what they have SEEN since they stepped out: what they can name (see _lookup_entity).
 var _seen_ids: Dictionary = {}
+## What they know of the screens in front of them (a decoder's now_playing(): the title, season, episode and the
+## line just said), told to the server rarely. Never drawn into the world.
+var _watching := SynthWatching.new()
 var _room_memory: Dictionary = {}
 var _room_seen := false
 var _skin_again: Dictionary = {}
@@ -443,6 +447,7 @@ func _process(delta: float) -> void:
 		_link.send_frame(_state_frame())
 		_check_player()
 		_watch_room()
+		_watch_screens()
 
 
 func _animate_charge() -> void:
@@ -604,6 +609,7 @@ func _tell_synth_she_was_summoned() -> void:
 	# What they saw on arrival is the baseline: only what changes from here is news.
 	_room_memory.clear()
 	_seen_ids.clear()
+	_watching.forget()
 	_room_seen = false
 	SummonerView.room_changes(_room_memory, placed, true)
 	_room_seen = true
@@ -900,6 +906,10 @@ func _spawn_body() -> bool:
 	_body.anchor = global_position
 	_body.persist_chat = true
 	host.add_child(_body)
+	# They follow what is said on a screen by READING it: a machine that can (the Jellyfin Decoder) then loads a text
+	# track for them, a hearing-impaired one by preference, without changing what is shown to the player.
+	_body.add_to_group("companion_viewer")
+	_body.set_meta("companion_lang", str(RiftSettings.load_settings().get("reads_lang", "")))
 	_body.load_chat()
 	# Inside the pod, facing out of its front.
 	_body.global_position = floor_spot
@@ -984,6 +994,14 @@ func _entities() -> Array:
 			entry["title"] = title
 		if n3.has_method("is_picked_up") and bool(n3.call("is_picked_up")):
 			entry["held"] = true
+		# A machine that shows something (the Jellyfin Decoder) says what, by now_playing(): the title, and for a series
+		# the season and episode, and -- when a text track was loaded for a reader -- the line just said.
+		if n3.has_method("now_playing"):
+			var showing: Dictionary = SynthWatching.brief(n3.call("now_playing"))
+			if not showing.is_empty():
+				entry["watching"] = showing
+			if n3.has_method("companion_kind") and str(entry["type"]) == WorldView.UNKNOWN:
+				entry["type"] = str(n3.call("companion_kind"))
 		found.append(entry)
 	WorldView.name_all(found)
 	var cam := get_viewport().get_camera_3d()
@@ -1124,6 +1142,20 @@ func _watch_room() -> void:
 	for line: Variant in said.slice(0, MAX_SIGHTINGS):
 		print("[Rift] sighting: %s" % str(line))
 		_link.send_frame(Protocol.event("sighting", str(line), "", SIGHTING_SALIENCE))
+
+
+## The screens in front of them (a TV box playing something, with the title, season, episode and the line just said): told
+## as quiet events when what is on CHANGES, and now and then with what was said. What they are told is theirs alone:
+## nothing is written into the room.
+func _watch_screens() -> void:
+	var screens: Array = []
+	for e: Dictionary in _placed_entities():
+		var node := e.get("node") as Node
+		if node != null and node.has_method("now_playing"):
+			screens.append({"id": str(e.get("id", "")), "name": str(e.get("name", "screen")), "info": node.call("now_playing")})
+	for ev: Dictionary in _watching.observe(screens, float(Time.get_ticks_msec()) / 1000.0):
+		print("[Rift] screen: %s" % str(ev["summary"]))
+		_link.send_frame(Protocol.event("watching", str(ev["summary"]), "", float(ev["salience"]), ev["data"]))
 
 
 func _check_player() -> void:
