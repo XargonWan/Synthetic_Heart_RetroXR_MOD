@@ -29,9 +29,11 @@ never from this repository.
 
 ## Releases
 
-A push to `main` publishes the release `v<version>` (the version in `mod.json`) with the zip attached. The notes are
-the commits since the previous release: `feat` under Changes, `fix` under Fixes. A push that leaves the version as it
-was publishes nothing. The same zip, version and notes are then added to the mod on
+A push to `main` publishes a release when it brings a `feat`, `fix` or `perf` commit since the previous one. The version
+is computed from the commits, not written by hand: `feat` raises the minor, `fix`/`perf` the patch, a breaking change
+(`!` or a `BREAKING CHANGE:` footer) the major (the minor while it is 0). `chore`, `docs`, `ci` and the like release
+nothing. The version of `mod.json` only matters for a first release; the pack carries the computed one. The notes are
+the commits since the previous release: `feat` under Changes, `fix` under Fixes. The same zip, version and notes are then added to the mod on
 [mod.io](https://mod.io/g/retroxr/) by [`tools/publish_modio.py`](tools/publish_modio.py), using the secret
 `MODIO_PAT` and the variable `MODIO_MOD_SLUG` (the mod's address on mod.io); its visibility is never changed, and a
 failure there is a warning, not a failed release. See [`.github/workflows/release.yml`](.github/workflows/release.yml).

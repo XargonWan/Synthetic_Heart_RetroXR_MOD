@@ -22,6 +22,7 @@ SKIN=$HOME/gits/Synthetic_Heart/skins/Rei godot --headless --path RetroXR --scri
 SKINS=$HOME/gits/Synthetic_Heart/skins godot --headless --path RetroXR --script <mod>/tests/budget_tests.gd
 # Scene probes (a .tscn run by path)
 godot --headless --path RetroXR <mod>/tests/nav_probe.tscn                 # also routine_probe, button_ray_probe
+python3 -I tests/release_version_test.py    # the version computed from commits
 # Offline test of the mod.io publisher (fake API; nothing reaches mod.io), and a dry run of the real script
 python3 -I tests/publish_modio_test.py
 python3 tools/publish_modio.py --zip dist/xenu.synth_rift-<version>.zip --version <version> --repo OWNER/NAME --dry-run
@@ -67,4 +68,4 @@ godot --headless --path RetroXR --script <mod>/tests/sound_tests.gd -- --write=D
 - Scripts use `preload("res://mods/xenu.synth_rift/scripts/...")` with absolute `res://` paths. Pure logic is kept in static, node-free classes (protocol, dispatch, view, nav, budget) so the headless suites can drive exactly what the room runs.
 - The `.uid` files next to scripts are Godot-generated. Commit them together with new scripts.
 - Comments are long `##` doc blocks that explain *why* (often the failure that prompted the design). Keep that style, and update the header when behaviour changes.
-- Bump `version` in `mod.json` for releases, and keep the README's "Built / Not built" lines current.
+- Do not bump `version` in `mod.json` for releases: the release workflow computes it from the commits (feat → minor, fix/perf → patch, breaking → major). Keep the README's "Built / Not built" lines current.

@@ -3,6 +3,7 @@
 
   python3 tools/pack_mod.py                       # writes dist/xenu.synth_rift-<version>.zip
   python3 tools/pack_mod.py --out some/where.zip
+  python3 tools/pack_mod.py --version 0.19.0      # the release workflow: the version computed from the commits
 
 It mirrors RetroXR/Tools/mods/pack_mod.gd, which needs a whole RetroXR checkout and a Godot binary: a pack is
 source files only (.gd, .tscn, .json, .png and the like, the same list), laid out as mods/<id>/... and read back
@@ -77,11 +78,14 @@ def collect() -> list[Path]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", help="the version to put in the pack's mod.json (the release's, computed from the history)")
     ap.add_argument("--out", type=Path, help="zip to write (default: dist/xenu.synth_rift-<version>.zip)")
     args = ap.parse_args()
 
     manifest = json.loads((ROOT / "mod.json").read_text(encoding="utf-8"))
     mod_id = manifest.get("id", "")
+    if args.version:
+        manifest["version"] = args.version  # the repository's mod.json is not rewritten; only the pack carries it
     version = manifest.get("version", "")
     if not mod_id or not version:
         fail("mod.json needs an id and a version")
@@ -100,7 +104,10 @@ def main() -> int:
         fail("nothing to pack")
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for rel in members:
-            z.write(ROOT / rel, prefix + rel.as_posix())
+            if rel.as_posix() == "mod.json" and args.version:
+                z.writestr(prefix + "mod.json", json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+            else:
+                z.write(ROOT / rel, prefix + rel.as_posix())
         z.write(thumb, prefix + THUMBNAIL)
     print(f"[pack] wrote {out} ({len(members) + 1} files)")
 

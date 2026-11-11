@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Write the notes of a release from the commits made since the previous release.
 
-Adapted from MOG-Server's scripts/release_notes.py. The version is the one in mod.json (the pack and the mod.io
-page carry it, so it is written by hand), not computed from the history. The previous release is the highest vX.Y.Z
-tag reachable from HEAD (none: the whole history). Each commit becomes a line without its type, with its scope in
+Adapted from MOG-Server's scripts/release_notes.py. The version is computed from the history (--next-version): the previous release is
+the highest vX.Y.Z tag reachable from HEAD (none: the whole history, and the version is the one in mod.json), and the
+commits since it decide the bump: a breaking change raises the minor while the major is 0 and the major from 1 on, a
+feat the minor, a fix, a perf or a subject that is not a conventional commit the patch. Only commits that appear in the
+notes count, so chore, docs, ci and the like release nothing. Each commit becomes a line without its type, with its scope in
 front and its hash, a link to the commit, at the end:
 
   ## Changes   feat, and a breaking change
   ## Fixes     fix, perf, and a subject that is not a conventional commit
   (left out)   chore, doc, docs, res, style, test, refactor, ci, build
 
+  release_notes.py --next-version [--base 0.18.0]        # prints the version to release, or nothing if none is due
   release_notes.py --repo OWNER/NAME --version 0.15.0 [--header FILE] [--body OUT]
 
 --body is the text of the GitHub release: the header file ({version} in it is the version), the sections and a link
@@ -74,6 +77,36 @@ def sort(commits: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], list[tu
     return changes, fixes
 
 
+def next_version(previous: str | None, commits: list[tuple[str, str]], base: str | None = None) -> str | None:
+    """The version to release after `previous`, or None when no commit since it belongs in the notes.
+
+    With no previous release the version is `base` (the first release is what mod.json says)."""
+    if previous is None:
+        return base if commits and base else None
+    major, minor, patch = (int(n) for n in RELEASE_TAG.match(previous).groups())
+    level = 0  # 0 nothing, 1 patch, 2 minor, 3 major
+    for _sha, message in commits:
+        subject = message.splitlines()[0] if message else ""
+        m = SUBJECT.match(subject)
+        if m is None:
+            level = max(level, 1)
+        elif m["bang"] or BREAKING_FOOTER.search(message):
+            level = max(level, 3)
+        elif m["type"] in CHANGES:
+            level = max(level, 2)
+        elif m["type"] in FIXES:
+            level = max(level, 1)
+    if level == 3 and major == 0:
+        level = 2  # before 1.0 a breaking change raises the minor
+    if level == 0:
+        return None
+    if level == 3:
+        return f"{major + 1}.0.0"
+    if level == 2:
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
 def line(text: str, sha: str, repo: str) -> str:
     return f"- {text} [[{sha[:7]}](https://github.com/{repo}/commit/{sha})]"
 
@@ -97,13 +130,22 @@ def body(header: str, notes: str, repo: str, version: str, previous: str | None)
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--repo", required=True, help="OWNER/NAME, for the links")
-    ap.add_argument("--version", required=True, help="the version being released, without the v")
+    ap.add_argument("--next-version", action="store_true", help="print the version to release and exit (nothing: none due)")
+    ap.add_argument("--base", help="with --next-version: the version of a first release, when there is no tag yet")
+    ap.add_argument("--repo", help="OWNER/NAME, for the links")
+    ap.add_argument("--version", help="the version being released, without the v")
     ap.add_argument("--header", type=Path, help="text put before the sections in the release body")
     ap.add_argument("--body", type=Path)
     args = ap.parse_args()
 
     previous = previous_release()
+    if args.next_version:
+        found = next_version(previous, commits_since(previous), args.base)
+        if found:
+            print(found)
+        return 0
+    if not args.repo or not args.version:
+        ap.error("--repo and --version are required to write the notes")
     notes = sections(commits_since(previous), args.repo)
     header = ""
     if args.header and args.header.exists():
