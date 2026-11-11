@@ -8,6 +8,8 @@ mod that does not exist is created PRIVATE. Also that a failure is a warning wit
 `[modio-tests] N cases, M failed` and exits non-zero on a failure or when it ran no case.
 """
 import argparse
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -79,7 +81,13 @@ def main() -> int:
 
         os.environ.pop("MODIO_PAT", None)
         sys.argv = ["x", "--zip", str(z), "--version", "1", "--repo", "X/y"]
-        check("no token: a warning, exit status 0", p.main() == 0)
+        # main() prints the warning as a GitHub annotation; here it is expected, so it is kept out of the run's log
+        # (and out of GITHUB_STEP_SUMMARY), where it would read as a real failure of the release.
+        os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            status = p.main()
+        check("no token: a warning, exit status 0", status == 0 and "MODIO_PAT is not set" in out.getvalue())
     print(f"[modio-tests] {cases} cases, {failed} failed")
     return 1 if failed or cases == 0 else 0
 
