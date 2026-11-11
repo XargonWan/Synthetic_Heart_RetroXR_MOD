@@ -75,8 +75,20 @@ jobs:
       # The same zip and the same notes go to mod.io, as the new version of the mod there (tools/publish_modio.py).
       # It never changes the mod's visibility, and a failure here is a warning in the run's summary, not a failed
       # release. MODIO_MOD_SLUG (a repository variable) is the mod's name_id when it differs from the repository name.
+      #
+      # To retry only this step (the token was missing, mod.io was down): set the secret, then start the workflow by hand
+      # (Actions > Release > Run workflow). The release is already there, so the zip and the notes are taken from it, and
+      # publish_modio.py adds nothing if mod.io already has that version.
+      - name: Take the zip and the notes of the existing release
+        if: steps.exists.outputs.found == 'true' && steps.version.outputs.version != '' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" --pattern '*.zip' --dir dist
+          gh release view "v${{ steps.version.outputs.version }}" --repo "${{ github.repository }}" --json body -q .body > RELEASE.md
+
       - name: Publish on mod.io
-        if: steps.exists.outputs.found == 'false'
+        if: steps.exists.outputs.found == 'false' || (steps.version.outputs.version != '' && github.event_name == 'workflow_dispatch')
         continue-on-error: true
         env:
           MODIO_PAT: ${{ secrets.MODIO_PAT }}

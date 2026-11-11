@@ -20,12 +20,15 @@ import publish_modio as p  # noqa: E402
 
 calls: list = []
 EXISTING = None
+FILES: list = []  # the files the existing mod already has
 
 
 def fake(method, path, token, query=None, fields=None, files=None, base=p.API):
     calls.append((method, path, dict(fields or {}), list(files or {}), base))
     if path == "/games":
         return {"data": [{"id": 7}]}
+    if method == "GET" and path.endswith("/files"):
+        return {"data": FILES}
     if method == "GET":
         return {"data": [EXISTING] if EXISTING else []}
     if path.endswith("/mods"):
@@ -39,7 +42,7 @@ def args(zip_path: Path, **kw) -> argparse.Namespace:
 
 
 def main() -> int:
-    global EXISTING
+    global EXISTING, FILES
     failed = cases = 0
 
     def check(name: str, ok: bool) -> None:
@@ -65,6 +68,16 @@ def main() -> int:
 
         check("writes go to the game's own domain", posts[0][4] == "https://g-7.modapi.io/v1")
         check("the game lookup uses api.mod.io", calls[0][4] == p.API)
+
+        FILES = [{"version": "1.2.3"}]
+        calls.clear()
+        result = p.publish(args(z), "t", [])
+        check("retry: a version mod.io already has is not added twice", not [c for c in calls if c[0] == "POST"] and "already" in result)
+        FILES = [{"version": "1.2.2"}]
+        calls.clear()
+        p.publish(args(z), "t", [])
+        check("another version is still added", len([c for c in calls if c[0] == "POST"]) == 1)
+        FILES = []
 
         EXISTING = None
         calls.clear()

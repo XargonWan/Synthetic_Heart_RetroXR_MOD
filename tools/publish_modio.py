@@ -17,6 +17,7 @@ The rules this follows (they are the same for every RetroXR mod):
   - The mod does not exist: it is created PRIVATE (visible=0), named like the repository, with the README as its
     description and res/thumbnail.png as its logo, then the file is added. These are placeholders for the author to
     fill in, which is why it is private. Only on creation; an existing mod's page is never rewritten.
+  - The mod already has a file with that version (a retry): nothing is added.
   - A failure never fails the workflow: it is printed as a warning and written to the run's summary, and the exit
     status is 0. A failed logo is a warning too, and the mod is still created.
 
@@ -143,6 +144,11 @@ def publish(args: argparse.Namespace, token: str, warnings: list[str]) -> str:
         mod = create_mod(token, game_id, name, name_id, manifest.get("description", name), readme,
                          args.thumbnail, warnings)
     mod_id = int(mod["id"])
+    if not created:
+        # A re-run (the workflow started by hand to retry after a missing token, say) must not add the same version twice.
+        have = request("GET", f"/games/{game_id}/mods/{mod_id}/files", token, base=game_api(game_id)).get("data", [])
+        if any(f.get("version") == args.version for f in have):
+            return f"version {args.version} is already on {mod.get('profile_url') or f'mod {mod_id}'}: nothing added"
     request("POST", f"/games/{game_id}/mods/{mod_id}/files", token,
             fields={"version": args.version, "changelog": notes, "active": "1"}, files={"filedata": args.zip},
             base=game_api(game_id))
