@@ -38,6 +38,9 @@ from pathlib import Path
 
 API = "https://api.mod.io/v1"
 GAME_NAME_ID = "retroxr"
+# mod.io sits behind Cloudflare, which refuses Python's default "Python-urllib/x.y" with error 1010 (a 403 before the
+# request reaches the API). Any plain client name gets through.
+USER_AGENT = "retroxr-mod-publisher/1.0"
 SUMMARY_MAX = 250  # mod.io's limit on the one-line summary
 
 
@@ -64,7 +67,7 @@ def request(method: str, path: str, token: str, query: dict | None = None,
             fields: dict[str, str] | None = None, files: dict[str, Path] | None = None) -> dict:
     """One call to the API; returns the parsed JSON, raises ModioError with mod.io's own message."""
     url = API + path + ("?" + urllib.parse.urlencode(query) if query else "")
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT}
     data = None
     if fields is not None or files:
         data, headers["Content-Type"] = multipart(fields or {}, files or {})
