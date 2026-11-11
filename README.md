@@ -11,9 +11,11 @@ It needs a **Synthetic Heart server** (the Rift Vessel socket, `/api/vessel/retr
 
 ## Screenshots
 
-![The Rift Summoner pod](res/screenshot1.png)
+![A SyntH, Rei, in front of the pod, nearby](res/screenshot1.png)
 
-![The pod and its menu](res/screenshot2.png)
+![The pod](res/screenshot2.png)
+
+![A SyntH, Rei, in front of the pod from afar](res/screenshot2.png)
 
 ## Install
 
