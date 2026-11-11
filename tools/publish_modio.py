@@ -36,7 +36,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-API = "https://api.mod.io/v1"
+API = "https://api.mod.io/v1"  # only to look the game up; see game_api()
 GAME_NAME_ID = "retroxr"
 # mod.io sits behind Cloudflare, which refuses Python's default "Python-urllib/x.y" with error 1010 (a 403 before the
 # request reaches the API). Any plain client name gets through.
@@ -63,10 +63,16 @@ def multipart(fields: dict[str, str], files: dict[str, Path]) -> tuple[bytes, st
     return bytes(out), f"multipart/form-data; boundary={boundary}"
 
 
+def game_api(game_id: int) -> str:
+    """mod.io refuses writes on api.mod.io ("Using api.mod.io is deprecated", HTTP 404) and wants the game's own
+    domain, g-<game id>.modapi.io. The game's id is only known after the first lookup, so that one uses API."""
+    return f"https://g-{game_id}.modapi.io/v1"
+
+
 def request(method: str, path: str, token: str, query: dict | None = None,
-            fields: dict[str, str] | None = None, files: dict[str, Path] | None = None) -> dict:
+            fields: dict[str, str] | None = None, files: dict[str, Path] | None = None, base: str = API) -> dict:
     """One call to the API; returns the parsed JSON, raises ModioError with mod.io's own message."""
-    url = API + path + ("?" + urllib.parse.urlencode(query) if query else "")
+    url = base + path + ("?" + urllib.parse.urlencode(query) if query else "")
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT}
     data = None
     if fields is not None or files:
@@ -99,7 +105,7 @@ def find_mod(token: str, game_id: int, name_id: str) -> dict | None:
     for path, query in ((f"/games/{game_id}/mods", {"name_id": name_id}),
                         ("/me/mods", {"game_id": game_id, "name_id": name_id})):
         try:
-            found = request("GET", path, token, query).get("data", [])
+            found = request("GET", path, token, query, base=game_api(game_id)).get("data", [])
         except ModioError:
             continue
         if found:
@@ -115,10 +121,10 @@ def create_mod(token: str, game_id: int, name: str, name_id: str, summary: str, 
               "description": description, "visible": "0"}
     if thumbnail and thumbnail.is_file():
         try:
-            return request("POST", f"/games/{game_id}/mods", token, fields=fields, files={"logo": thumbnail})
+            return request("POST", f"/games/{game_id}/mods", token, fields=fields, files={"logo": thumbnail}, base=game_api(game_id))
         except ModioError as e:
             warnings.append(f"the logo was refused, creating the mod without it: {e}")
-    return request("POST", f"/games/{game_id}/mods", token, fields=fields)
+    return request("POST", f"/games/{game_id}/mods", token, fields=fields, base=game_api(game_id))
 
 
 def publish(args: argparse.Namespace, token: str, warnings: list[str]) -> str:
@@ -138,7 +144,8 @@ def publish(args: argparse.Namespace, token: str, warnings: list[str]) -> str:
                          args.thumbnail, warnings)
     mod_id = int(mod["id"])
     request("POST", f"/games/{game_id}/mods/{mod_id}/files", token,
-            fields={"version": args.version, "changelog": notes, "active": "1"}, files={"filedata": args.zip})
+            fields={"version": args.version, "changelog": notes, "active": "1"}, files={"filedata": args.zip},
+            base=game_api(game_id))
     where = mod.get("profile_url") or f"mod {mod_id}"
     visibility = "" if created else f" (visibility left as it was)"
     return f"{'created PRIVATE mod and ' if created else ''}added {args.zip.name} as version {args.version} to {where}{visibility}"

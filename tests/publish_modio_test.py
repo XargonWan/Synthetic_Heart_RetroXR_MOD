@@ -20,8 +20,8 @@ calls: list = []
 EXISTING = None
 
 
-def fake(method, path, token, query=None, fields=None, files=None):
-    calls.append((method, path, dict(fields or {}), list(files or {})))
+def fake(method, path, token, query=None, fields=None, files=None, base=p.API):
+    calls.append((method, path, dict(fields or {}), list(files or {}), base))
     if path == "/games":
         return {"data": [{"id": 7}]}
     if method == "GET":
@@ -60,6 +60,9 @@ def main() -> int:
         check("existing mod: one POST, the file", len(posts) == 1 and posts[0][1] == "/games/7/mods/5/files")
         check("existing mod: version sent", posts[0][2]["version"] == "1.2.3")
         check("existing mod: visibility never sent", all("visible" not in c[2] for c in calls))
+
+        check("writes go to the game's own domain", posts[0][4] == "https://g-7.modapi.io/v1")
+        check("the game lookup uses api.mod.io", calls[0][4] == p.API)
 
         EXISTING = None
         calls.clear()
