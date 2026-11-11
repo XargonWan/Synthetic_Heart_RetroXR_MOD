@@ -22,6 +22,9 @@ SKIN=$HOME/gits/Synthetic_Heart/skins/Rei godot --headless --path RetroXR --scri
 SKINS=$HOME/gits/Synthetic_Heart/skins godot --headless --path RetroXR --script <mod>/tests/budget_tests.gd
 # Scene probes (a .tscn run by path)
 godot --headless --path RetroXR <mod>/tests/nav_probe.tscn                 # also routine_probe, button_ray_probe
+# Offline test of the mod.io publisher (fake API; nothing reaches mod.io), and a dry run of the real script
+python3 -I tests/publish_modio_test.py
+python3 tools/publish_modio.py --zip dist/xenu.synth_rift-<version>.zip --version <version> --repo OWNER/NAME --dry-run
 # End-to-end against a REAL Synth rift socket (starts the server side itself)
 python tests/rift_harness.py              # PROBE=summoner runs the Summoner object; WRONGPW=1 tests a refused token; HOST=1 for flatpak
 python tests/fetch_probe.py               # AssetFetcher against a deliberately slow HTTP server

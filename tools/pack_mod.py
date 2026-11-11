@@ -9,7 +9,9 @@ source files only (.gd, .tscn, .json, .png and the like, the same list), laid ou
 before this exits. The rules that matter, from the loader:
 
   - mod.json must parse, its id must be the folder's, and its entry script must be in the pack
-  - thumbnail.png must be a readable PNG, 16:9, at least 512x288 (the Mods page and the mod.io logo)
+  - res/thumbnail.png (kept in res/ in the repository, with the screenshots) must be a readable PNG, 16:9, at least
+    512x288 (the Mods page and the mod.io logo). It goes into the pack as mods/<id>/thumbnail.png, where the loader
+    reads it; the rest of res/ (screenshots) is for the README and stays out of the pack
   - nothing may be the game's own file (project.godot, uid_cache.bin, ...)
 
 Exit status is non-zero, and no zip is left behind, if any check fails.
@@ -25,13 +27,14 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-THUMBNAIL = "thumbnail.png"
+THUMBNAIL = "thumbnail.png"  # its name in the pack
+THUMBNAIL_SOURCE = Path("res") / THUMBNAIL  # where it lives in the repository
 THUMBNAIL_MIN = (512, 288)
 THUMBNAIL_ASPECT = 16.0 / 9.0
 SOURCE_EXTS = {"gd", "tscn", "tres", "json", "txt", "md", "gdshader", "gdshaderinc", "uid", "png", "svg"}
 FORBIDDEN_NAMES = {"project.binary", "project.godot", "global_script_class_cache.cfg", "uid_cache.bin"}
 # The repository's own machinery is not part of the mod.
-SKIP_TOP = {".git", ".github", ".godot", "tools", "dist"}
+SKIP_TOP = {".git", ".github", ".godot", "tools", "dist", "res"}
 
 
 def fail(message: str) -> None:
@@ -82,9 +85,9 @@ def main() -> int:
     version = manifest.get("version", "")
     if not mod_id or not version:
         fail("mod.json needs an id and a version")
-    thumb = ROOT / THUMBNAIL
+    thumb = ROOT / THUMBNAIL_SOURCE
     if not thumb.is_file():
-        fail(f"no {THUMBNAIL}: every pack needs a preview image")
+        fail(f"no {THUMBNAIL_SOURCE}: every pack needs a preview image")
     err = thumbnail_error(thumb.read_bytes())
     if err:
         fail(err)
@@ -98,7 +101,8 @@ def main() -> int:
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for rel in members:
             z.write(ROOT / rel, prefix + rel.as_posix())
-    print(f"[pack] wrote {out} ({len(members)} files)")
+        z.write(thumb, prefix + THUMBNAIL)
+    print(f"[pack] wrote {out} ({len(members) + 1} files)")
 
     # Read it back the way the loader does, and fail loudly rather than ship a pack the Mods page cannot show.
     with zipfile.ZipFile(out) as z:

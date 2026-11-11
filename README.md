@@ -1,3 +1,5 @@
+![Synthetic Heart Rift](res/thumbnail.png)
+
 # Synthetic Heart Rift (`xenu.synth_rift`)
 
 A mod for [RetroXR](https://github.com/RetroXR/RetroXR): the **Rift Summoner**, an object that brings Synthetic Heart
@@ -6,6 +8,12 @@ them, sit, watch the TV and listen through the chat page's microphone. They neve
 the protocol's list is refused, and nothing is written to a core.
 
 It needs a **Synthetic Heart server** (the Rift Vessel socket, `/api/vessel/retroxr/ws`).
+
+## Screenshots
+
+![The Rift Summoner pod](res/screenshot1.png)
+
+![The pod and its menu](res/screenshot2.png)
 
 ## Install
 
@@ -23,7 +31,10 @@ never from this repository.
 
 A push to `main` publishes the release `v<version>` (the version in `mod.json`) with the zip attached. The notes are
 the commits since the previous release: `feat` under Changes, `fix` under Fixes. A push that leaves the version as it
-was publishes nothing. See [`.github/workflows/release.yml`](.github/workflows/release.yml).
+was publishes nothing. The same zip, version and notes are then added to the mod on
+[mod.io](https://mod.io/g/retroxr/) by [`tools/publish_modio.py`](tools/publish_modio.py), using the secret
+`MODIO_PAT` and the variable `MODIO_MOD_SLUG` (the mod's address on mod.io); its visibility is never changed, and a
+failure there is a warning, not a failed release. See [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Layout
 

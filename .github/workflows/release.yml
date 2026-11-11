@@ -39,6 +39,10 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Test the mod.io publisher
+        if: steps.exists.outputs.found == 'false'
+        run: python3 -I tests/publish_modio_test.py
+
       - name: Pack the mod
         if: steps.exists.outputs.found == 'false'
         run: python3 tools/pack_mod.py --out "dist/xenu.synth_rift-${{ steps.version.outputs.version }}.zip"
@@ -60,3 +64,17 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Synthetic Heart Rift v${{ steps.version.outputs.version }}" \
             --notes-file RELEASE.md
+
+      # The same zip and the same notes go to mod.io, as the new version of the mod there (tools/publish_modio.py).
+      # It never changes the mod's visibility, and a failure here is a warning in the run's summary, not a failed
+      # release. MODIO_MOD_SLUG (a repository variable) is the mod's name_id when it differs from the repository name.
+      - name: Publish on mod.io
+        if: steps.exists.outputs.found == 'false'
+        continue-on-error: true
+        env:
+          MODIO_PAT: ${{ secrets.MODIO_PAT }}
+          MODIO_MOD_SLUG: ${{ vars.MODIO_MOD_SLUG }}
+        run: |
+          python3 tools/publish_modio.py --zip "dist/xenu.synth_rift-${{ steps.version.outputs.version }}.zip" \
+            --version "${{ steps.version.outputs.version }}" --notes RELEASE.md --repo "${{ github.repository }}" \
+            --readme README.md --thumbnail res/thumbnail.png

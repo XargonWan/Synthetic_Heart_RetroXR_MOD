@@ -4,3 +4,4 @@ dist/
 RELEASE.md
 finito
 TODO*.md
+__pycache__/
