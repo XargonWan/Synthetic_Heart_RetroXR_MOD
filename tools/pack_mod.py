@@ -32,7 +32,11 @@ THUMBNAIL = "thumbnail.png"  # its name in the pack
 THUMBNAIL_SOURCE = Path("res") / THUMBNAIL  # where it lives in the repository
 THUMBNAIL_MIN = (512, 288)
 THUMBNAIL_ASPECT = 16.0 / 9.0
-SOURCE_EXTS = {"gd", "tscn", "tres", "json", "txt", "md", "gdshader", "gdshaderinc", "uid", "png", "svg"}
+SOURCE_EXTS = {"gd", "tscn", "tres", "json", "gdshader", "gdshaderinc", "uid", "png", "svg"}
+# Documentation and notes are for the repository, not the game: the RetroXR loader refuses a pack that carries a file
+# that looks like one ("carries a file that looks like a game (CLAUDE.md)"). So no .md or .txt is shipped, and the
+# names below are left out even if their extension were ever allowed again.
+NOT_SHIPPED_NAMES = {"CLAUDE.md", "README.md", "README.txt", "TODO.md"}
 FORBIDDEN_NAMES = {"project.binary", "project.godot", "global_script_class_cache.cfg", "uid_cache.bin"}
 # The repository's own machinery is not part of the mod.
 SKIP_TOP = {".git", ".github", ".godot", "tools", "dist", "res"}
@@ -65,6 +69,9 @@ def collect() -> list[Path]:
     for path in sorted(ROOT.rglob("*")):
         rel = path.relative_to(ROOT)
         if not path.is_file() or rel.parts[0] in SKIP_TOP:
+            continue
+        if path.name in NOT_SHIPPED_NAMES:
+            print(f"[pack] skipped {rel} (documentation, not part of the mod)")
             continue
         if path.name in FORBIDDEN_NAMES:
             print(f"[pack] skipped {rel} (would replace the game's own)")
