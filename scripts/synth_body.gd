@@ -16,6 +16,7 @@ const SynthRoutines := preload("res://mods/xenu.synth_rift/scripts/synth_routine
 const WorldView := preload("res://mods/xenu.synth_rift/scripts/world_view.gd")
 const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 const SynthNav := preload("res://mods/xenu.synth_rift/scripts/synth_nav.gd")
+const KaradaPuppet := preload("res://mods/xenu.synth_rift/scripts/karada_puppet.gd")
 const AudioBytes := preload("res://mods/xenu.synth_rift/scripts/audio_bytes.gd")
 const VoiceRecorder := preload("res://mods/xenu.synth_rift/scripts/voice_recorder.gd")
 
@@ -180,12 +181,14 @@ func _ready() -> void:
 	routines.body = self
 	routines.done.connect(func(kind: String, ok: bool, summary: String, data: Dictionary) -> void: routine_done.emit(kind, ok, summary, data))
 	add_child(routines)
+	# The stand-in is shrunk like the skin is (KaradaPuppet.BODY_SCALE): same size before and after it arrives.
+	var k := KaradaPuppet.BODY_SCALE
 	var capsule := MeshInstance3D.new()
 	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.22
-	mesh.height = 1.55
+	mesh.radius = 0.22 * k
+	mesh.height = 1.55 * k
 	capsule.mesh = mesh
-	capsule.position.y = 0.775
+	capsule.position.y = 0.775 * k
 	capsule.name = "Visual"
 	_visual = capsule
 	_capsule = capsule
@@ -199,14 +202,14 @@ func _ready() -> void:
 
 	var shape := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
-	cap.radius = 0.22
-	cap.height = 1.55
+	cap.radius = 0.22 * k
+	cap.height = 1.55 * k
 	shape.shape = cap
-	shape.position.y = 0.775
+	shape.position.y = 0.775 * k
 	add_child(shape)
 
 	_bubble = Label3D.new()
-	_bubble.position = Vector3(0, 1.85, 0)
+	_bubble.position = Vector3(0, 1.85 * k, 0)
 	_bubble.pixel_size = 0.0016
 	_bubble.font_size = 44
 	_bubble.outline_size = 10
@@ -225,10 +228,10 @@ func _ready() -> void:
 	pointer.collision_mask = 0
 	var pshape := CollisionShape3D.new()
 	var pcyl := CylinderShape3D.new()
-	pcyl.radius = 0.38
-	pcyl.height = 1.75
+	pcyl.radius = 0.38 * k
+	pcyl.height = 1.75 * k
 	pshape.shape = pcyl
-	pshape.position.y = 0.875
+	pshape.position.y = 0.875 * k
 	pointer.add_child(pshape)
 	add_child(pointer)
 
@@ -237,7 +240,7 @@ func _ready() -> void:
 	_voice.name = "Voice"
 	_voice.unit_size = 3.0
 	_voice.max_distance = 20.0
-	_voice.position = Vector3(0, 1.55, 0)
+	_voice.position = Vector3(0, 1.55 * k, 0)
 	_capture = _voice_capture()
 	if _capture != null:
 		_voice.bus = VOICE_BUS
@@ -745,7 +748,7 @@ func swap_puppet(puppet: Node3D) -> void:
 
 ## Where their eyes are above the floor.
 func eye_height() -> float:
-	return float(_puppet.get("height")) * 0.93 if _puppet != null else 1.45
+	return float(_puppet.get("height")) * 0.93 if _puppet != null else 1.45 * KaradaPuppet.BODY_SCALE
 
 
 func has_puppet() -> bool:

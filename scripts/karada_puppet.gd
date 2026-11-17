@@ -32,8 +32,17 @@ const BODY_BONES := [
 ]
 const FINGERS := [["Thumb", "Thumb"], ["Index", "Index"], ["Middle", "Middle"], ["Ring", "Ring"], ["Little", "Pinky"]]
 
+## How much smaller than the skin's own size they stand in the room. The VRoid models come out
+## taller than the person they are meant to be (Riko comes out at 1.73 m, Zero at 1.79, while Synth is
+## about 1.55-1.58 m next to a player of 1.63 m), so the whole body is scaled down, not only its height:
+## a uniform scale on `model`, applied after the body cache (the cache keeps the skin as it came, so this
+## needs no BUDGET_VERSION bump). `SynthBody` scales its capsule
+## stand-in by the same factor, so the two are the same size.
+const BODY_SCALE := 0.91
+
 var model: Node3D = null
 var skeleton: Skeleton3D = null
+## Their height in the room, metres (already scaled by BODY_SCALE).
 var height := 1.6
 
 var _src_root: Node3D = null
@@ -139,7 +148,8 @@ func load_model(vrm: PackedByteArray, use_cache: bool = true) -> bool:
 	skeleton = skels[0] as Skeleton3D
 	model.name = "Model"
 	add_child(model)
-	height = _measure_height()
+	height = _measure_height() * BODY_SCALE
+	model.scale = Vector3.ONE * BODY_SCALE
 	var measured := VrmBudget.measure(model)
 	budget = {"tier": tier_name, "from_cache": from_cache, "tris": measured["tris"], "verts": measured["verts"],
 		"surfaces": measured["surfaces"], "blend_shapes": measured["blend_shapes"], "texture_bytes": measured["texture_bytes"],

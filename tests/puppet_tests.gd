@@ -29,7 +29,7 @@ func _initialize() -> void:
 		_check(puppet.add_clip(clip.get_file().get_basename(), FileAccess.get_file_as_bytes(skin + "/animations/" + clip)),
 			"%s loads" % clip)
 	_check(puppet.mapped_bones() >= 50, "52 bones map (%d)" % puppet.mapped_bones())
-	_check(puppet.height > 1.5 and puppet.height < 1.8, "they are a person's height (%.2f m)" % puppet.height)
+	_check(puppet.height > 1.4 and puppet.height < 1.8, "they are a person's height (%.2f m)" % puppet.height)
 
 	var tgt: Skeleton3D = puppet.skeleton
 	var src: Skeleton3D = puppet._src_skel
