@@ -18,8 +18,9 @@
 ## It is handled like an arcade cabinet, because it is as big and as awkward to move:
 ## taken by HOLDING the grab on it for a second (a ring fills; a stray squeeze or click
 ## never carries a 2 m pod off), see-through while it is in a hand, never thrown, stood
-## upright again if it is dropped leaning, and set down by aiming at the floor, where a
-## yellow rectangle shows its base (GroundPlacement). Its menu opens beside it.
+## upright again if it is dropped leaning, and set down by aiming at the floor, where RetroXR's
+## own footprint shows its base (RayFloorPreview, switched on by `ray_floor_preview_default`; on
+## v0.13.0 and before, its GroundPlacement rectangle: see _add_floor_placement). Its menu opens beside it.
 ##
 ## It is IDLE whenever a room loads: an open rift is a live connection to somebody's
 ## server, and that is not something to restore silently.
@@ -76,14 +77,16 @@ const HELD_TRANSPARENCY := 0.65
 ## flash solid in front of the face on its way down.
 const GHOST_SETTLE := 0.6
 const GHOST_SPEED := 0.15
-## The base on the floor, for the yellow rectangle: the base ring reaches about 0.57 m from the middle.
-const FOOTPRINT := Vector2(1.3, 1.3)
 ## Standing it upright again: the fraction of the tilt corrected each second, and the most it
 ## turns at, radians a second (an arcade cabinet's numbers). Under UPRIGHT_EPS it rests.
 const RIGHT_RATE := 5.0
 const RIGHT_MAX := 3.0
 const UPRIGHT_EPS := 0.0035
 const CENTER_OF_MASS_Y := 0.35
+
+## The base on the floor, for the older RetroXR's yellow rectangle: the base ring reaches about 0.57 m from the middle.
+const FOOTPRINT := Vector2(1.3, 1.3)
+const GROUND_PLACEMENT_PATH := "res://Scripts/Interaction/ground_placement.gd"
 
 const LIGHT_OFF := Color(0.9, 0.15, 0.1)
 ## Synth's own colour, from its banner.
@@ -185,12 +188,7 @@ func _ready() -> void:
 	_link.transcript_received.connect(_on_transcript)
 	_button.button_pressed.connect(_on_screen_touched)
 	action_pressed.connect(func(_p: Variant) -> void: toggle())
-	# Set it down by aiming at the floor: a yellow rectangle shows where it will stand.
-	var placer := GroundPlacement.new()
-	placer.name = "GroundPlacement"
-	placer.host = self
-	placer.set_footprint(FOOTPRINT)
-	add_child(placer)
+	_add_floor_placement()
 	# See-through while carried, like a cabinet.
 	_collect_ghost_parts()
 	grabbed.connect(func(_p: Variant = null, _by: Variant = null) -> void:
@@ -203,6 +201,30 @@ func _ready() -> void:
 	center_of_mass = Vector3(0.0, CENTER_OF_MASS_Y, 0.0)
 	angular_damp = maxf(angular_damp, 2.0)
 	_show_idle()
+
+
+## Set down by aiming at the floor, on whichever RetroXR this runs in:
+##   - from 2026-11-15 on (after v0.13.0) RetroXR does it for every pickable (RayFloorPreview: a held ray shows the base's
+##     footprint and a release stands it there, upright). It measures the drawn bounds itself, so there is nothing to size;
+##     the pod only asks for it with `ray_floor_preview_default`.
+##   - v0.13.0 and before have a GroundPlacement node to add instead (a yellow rectangle the size of FOOTPRINT). It is loaded
+##     by path, never named: a script that names a class RetroXR no longer has does not compile, and then the pod
+##     does not appear at all (the newer RetroXR deleted that class on 2026-11-13).
+## With neither it is just dropped where it is let go.
+func _add_floor_placement() -> void:
+	if &"ray_floor_preview_default" in self:
+		set(&"ray_floor_preview_default", true)
+		return
+	if not ResourceLoader.exists(GROUND_PLACEMENT_PATH):
+		return
+	var placer_script: Variant = load(GROUND_PLACEMENT_PATH)
+	if not placer_script is GDScript:
+		return
+	var placer: Node = (placer_script as GDScript).new()
+	placer.name = "GroundPlacement"
+	placer.set("host", self)
+	placer.call("set_footprint", FOOTPRINT)
+	add_child(placer)
 
 
 func _player(player_name: String) -> AudioStreamPlayer3D:
@@ -231,6 +253,8 @@ func throw_scale() -> float:
 ## is_picked_up() stays false and no signal fires: the layer it was moved to is the tell).
 func _is_held() -> bool:
 	if _signal_held or is_picked_up():
+		return true
+	if get(&"ray_holder") != null:
 		return true
 	return collision_layer == picked_up_layer and collision_layer != original_collision_layer
 

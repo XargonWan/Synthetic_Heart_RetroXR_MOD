@@ -19,8 +19,8 @@ const R_IN := 0.058 * SIZE
 ## Half the width of the opening, from straight ahead, in degrees.
 const OPEN_HALF_DEG := 52.0
 const BASE_Y := 0.02 * SIZE
-## The origin is on the floor, in the middle of the base: that is where GroundPlacement
-## stands a thing, as it does an arcade cabinet.
+## The origin is on the floor, in the middle of the base: that is where RetroXR's floor placement
+## (RayFloorPreview) stands a thing, as it does an arcade cabinet.
 const FLOOR_Y := 0.0
 ## What the whole pod stands on: floor to hood, in metres.
 const TOTAL_HEIGHT := 0.34 * SIZE
@@ -46,8 +46,8 @@ const SCREEN_TILT_DEG := 15.0
 const LABEL_OFF := Color(1.0, 0.35, 0.28)
 
 
-## The pod's front is +Z, like an arcade cabinet's: GroundPlacement turns +Z toward the player
-## and draws its bar there. It is built facing -Z and turned half a circle at the end.
+## The pod's front is +Z, like an arcade cabinet's: RetroXR's floor placement draws its front
+## arrow on +Z (the authored front). It is built facing -Z and turned half a circle at the end.
 const FRONT_FLIP := Transform3D(Basis(Vector3.UP, PI), Vector3.ZERO)
 
 

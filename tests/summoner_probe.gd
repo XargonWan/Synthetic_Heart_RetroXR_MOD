@@ -149,7 +149,7 @@ func _ready() -> void:
 
 
 ## It is handled like an arcade cabinet: held on for a second, see-through in a hand, never thrown,
-## stood upright when dropped leaning, set down on a yellow rectangle by aiming at the floor.
+## stood upright when dropped leaning, set down by aiming at the floor (RetroXR's RayFloorPreview).
 func _check_handling() -> void:
 	_check(HoldToGrab.seconds_for(_summoner) == HoldToGrab.DEFAULT_SECONDS, "it is taken by holding the grab on it (%.1f s)" % HoldToGrab.seconds_for(_summoner))
 	_check(_summoner.throw_scale() == 0.0, "it is never thrown")
@@ -164,19 +164,21 @@ func _check_handling() -> void:
 		await get_tree().physics_frame
 	_check(_summoner.ghost_transparency() == 0.0, "solid again once set down (%.2f)" % _summoner.ghost_transparency())
 
-	# The yellow rectangle, the size of its base, with its front toward +Z; and what a release does.
+	# RetroXR's floor placement, whichever this RetroXR has: the newer one by the property, v0.13.0's by a GroundPlacement node
+	# (loaded by path: naming the class stopped this script compiling once RetroXR deleted it).
 	var placer: Node = _summoner.get_node_or_null("GroundPlacement")
-	_check(placer != null, "it has a ground placement")
-	if placer != null:
-		_check(placer.footprint.is_equal_approx(_summoner.FOOTPRINT), "the rectangle is the size of its base")
-		placer.preview({"position": Vector3(3, 0, -2), "yaw": 0.0})
-		var marker := get_tree().current_scene.get_node_or_null("GroundPlacementMarker") as Node3D
-		_check(marker != null and marker.visible, "a yellow rectangle shows where it will stand")
-		placer.preview({})
-		placer.apply({"position": Vector3(2, 0, -1), "yaw": 0.7})
-		_check(_summoner.global_position.distance_to(Vector3(2, 0, -1)) < 0.01, "letting go stands it on the rectangle")
-		_check(absf(_summoner.global_rotation.y - 0.7) < 0.01 and _summoner.global_basis.y.dot(Vector3.UP) > 0.999, "upright, turned as the rectangle was")
-		placer.apply({"position": Vector3(0, 0, 0), "yaw": 0.0})
+	if &"ray_floor_preview_default" in _summoner:
+		_check(_summoner.get(&"ray_floor_preview_default") == true, "a held ray shows its footprint and a release stands it there")
+		_check(placer == null, "and it adds no GroundPlacement node")
+	elif ResourceLoader.exists(_summoner.GROUND_PLACEMENT_PATH):
+		_check(placer != null, "it has a ground placement")
+		if placer != null:
+			_check(placer.footprint.is_equal_approx(_summoner.FOOTPRINT), "the rectangle is the size of its base")
+			placer.apply({"position": Vector3(2, 0, -1), "yaw": 0.7})
+			_check(_summoner.global_position.distance_to(Vector3(2, 0, -1)) < 0.01, "letting go stands it on the rectangle")
+			placer.apply({"position": Vector3(0, 0, 0), "yaw": 0.0})
+	else:
+		print("[probe] this RetroXR has no floor placement at all: a release just drops it")
 
 	# Dropped leaning, it stands up again. 1.2 rad (69 degrees) is past where it would topple by
 	# itself (its base is 0.58 m in radius, its weight 0.35 m up: it tips at 59), so only the

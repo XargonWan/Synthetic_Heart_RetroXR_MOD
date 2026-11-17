@@ -89,12 +89,9 @@ func _ready() -> void:
 	await _shoot(out, "1b_right_flank", Vector3(3.0, 1.6, 0.4), Vector3(0, 1.4, 0))
 	await _shoot(out, "1c_left_flank", Vector3(-3.0, 1.6, 0.4), Vector3(0, 1.4, 0))
 	await _shoot(out, "1d_back", Vector3(1.2, 1.6, -3.5), Vector3(0, 1.2, 0))
-	# Carried: see-through, with the yellow rectangle where it would be set down.
+	# Carried: see-through (the footprint is RetroXR's own, drawn by its ray, not by the pod).
 	_summoner._signal_held = true   # as if in a hand: the pod's own tick keeps it a ghost
-	var placer: Node = _summoner.get_node("GroundPlacement")
-	placer.preview({"position": Vector3(2.0, 0, 2.4), "yaw": 0.0})
-	await _shoot(out, "2_carried_ghost_and_placement", Vector3(3.8, 1.9, 6.4), Vector3(1.0, 0.8, 1.2))
-	placer.preview({})
+	await _shoot(out, "2_carried_ghost", Vector3(3.8, 1.9, 6.4), Vector3(1.0, 0.8, 1.2))
 	_summoner._signal_held = false
 	_summoner._ghost_settle = 0.0
 	await get_tree().physics_frame
