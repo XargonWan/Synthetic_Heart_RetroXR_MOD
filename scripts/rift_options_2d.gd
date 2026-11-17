@@ -4,6 +4,7 @@
 ## Emits:
 ##   settings_changed(server, token)  -- a field was committed (Enter, or focus left it)
 ##   power_pressed                    -- the Open/Close button
+##   follow_me_toggled(on)            -- "Follow me": Synth comes along when the player changes room
 ##   forget_chat_pressed              -- "Forget the chat": the panel asks the Summoner, then calls chat_forgotten()
 ##   close_requested                  -- the X
 extends Control
@@ -12,6 +13,7 @@ signal close_requested
 signal settings_changed(server: String, token: String)
 signal power_pressed
 signal forget_chat_pressed
+signal follow_me_toggled(on: bool)
 
 const RiftSettings := preload("res://mods/xenu.synth_rift/scripts/rift_settings.gd")
 const BodyCache := preload("res://mods/xenu.synth_rift/scripts/body_cache.gd")
@@ -73,6 +75,13 @@ func _build_ui() -> void:
 		_commit()
 		power_pressed.emit())
 	root.add_child(_power)
+
+	# Synth comes along when the player changes room (the Summoner of the next room opens the rift by itself). On by default.
+	var follow := CheckButton.new()
+	follow.text = "Follow me to other rooms"
+	follow.button_pressed = RiftSettings.follow_me_on()
+	follow.toggled.connect(func(on: bool) -> void: follow_me_toggled.emit(on))
+	root.add_child(follow)
 
 	# What they see can go to Synth as a picture (watching the TV, looking around): the player's to allow.
 	var pictures := CheckButton.new()

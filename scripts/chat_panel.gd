@@ -56,6 +56,7 @@ func _ensure_ui_connected() -> void:
 		return
 	ui.close_requested.connect(hide_panel)
 	ui.set_synth_name(RiftSettings.synth_name())
+	ui.send_back_requested.connect(_on_send_back)
 	ui.message_sent.connect(func(text: String) -> void:
 		if is_instance_valid(_body):
 			_body.send_chat(text))
@@ -68,6 +69,14 @@ func _ensure_ui_connected() -> void:
 	if _body.has_signal("chat_changed"):
 		_body.chat_changed.connect(_refresh)
 	_ui_connected = true
+
+
+## "Send back": whichever Summoner holds the rift in this room (the pod, or the invisible one a follow brought) closes it.
+func _on_send_back() -> void:
+	for pod: Node in get_tree().get_nodes_in_group("rift_summoner"):
+		if pod.has_method("is_on") and bool(pod.call("is_on")):
+			pod.call("set_on", false)
+	hide_panel()
 
 
 func _refresh() -> void:

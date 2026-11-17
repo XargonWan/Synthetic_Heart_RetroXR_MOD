@@ -3,10 +3,12 @@
 ##
 ##   message_sent(text)   Enter in the field, or the Send button
 ##   close_requested      the X
+##   send_back_requested  "Send back": the rift is closed and they go (the way to do it where the room has no Summoner)
 extends Control
 
 signal message_sent(text: String)
 signal close_requested
+signal send_back_requested
 ## The mic: first press starts listening, the next ends it and sends what was said.
 signal mic_pressed
 
@@ -32,6 +34,12 @@ func _ready() -> void:
 	margin.add_child(root)
 	var title_row := MenuStyle.title_row(root, "Talk to %s" % _synth_name)
 	_title = title_row.get_child(0) as Label
+	var back := Button.new()
+	back.text = "Send back"
+	back.custom_minimum_size = Vector2(110, 34)
+	back.add_theme_font_size_override("font_size", 16)
+	back.pressed.connect(func() -> void: send_back_requested.emit())
+	title_row.add_child(back)
 	MenuStyle.close_button(title_row, func() -> void: close_requested.emit())
 	root.add_child(HSeparator.new())
 

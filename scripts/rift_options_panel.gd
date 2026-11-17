@@ -61,6 +61,7 @@ func _ensure_ui_connected() -> void:
 	ui.settings_changed.connect(_on_settings_changed)
 	ui.power_pressed.connect(_on_power_pressed)
 	ui.forget_chat_pressed.connect(_on_forget_chat)
+	ui.follow_me_toggled.connect(_on_follow_me)
 	if _summoner.has_signal("status_changed"):
 		_summoner.status_changed.connect(_refresh)
 	_ui_connected = true
@@ -84,6 +85,12 @@ func _refresh() -> void:
 
 func _on_settings_changed(server: String, token: String) -> void:
 	RiftSettings.save(server, token)
+
+
+func _on_follow_me(on: bool) -> void:
+	RiftSettings.set_follow_me(on)
+	if is_instance_valid(_summoner) and _summoner.has_method("follow_me_changed"):
+		_summoner.call("follow_me_changed", on)
 
 
 func _on_forget_chat() -> void:
