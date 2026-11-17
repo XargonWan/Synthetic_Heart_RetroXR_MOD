@@ -41,6 +41,9 @@ const RiftDispatch := preload("res://mods/xenu.synth_rift/scripts/rift_dispatch.
 const Use := preload("res://mods/xenu.synth_rift/scripts/synth_use.gd")
 const ChatStore := preload("res://mods/xenu.synth_rift/scripts/chat_store.gd")
 const SynthWatching := preload("res://mods/xenu.synth_rift/scripts/synth_watching.gd")
+const SynthNav := preload("res://mods/xenu.synth_rift/scripts/synth_nav.gd")
+const FollowSpot := preload("res://mods/xenu.synth_rift/scripts/follow_spot.gd")
+const RiftFollow := preload("res://mods/xenu.synth_rift/scripts/rift_follow.gd")
 
 ## What Synth calls the player: they have no profile in a room.
 const PLAYER_NAME := "player"
@@ -117,12 +120,35 @@ var _link_ready := false
 ## "" after a goodbye (the player sent them back), which ends the session for good.
 static var _resume_session := ""
 static var _resume_room := ""
+## The scene node (its instance id) the session was last welcomed in. Rooms are told apart by THIS and never by name: every
+## RetroXR room's root node is called "Root", so two rooms have the same `_room_id()` whenever SceneManager is not asked.
+static var _resume_scene := 0
+## A new room's pod waits this long before it summons: the room is still being put together.
+const FOLLOW_DELAY := 0.3
+const FOLLOW_CHARGE := 0.3
 ## `say`s the model made while they were still in the capsule, and the voice clips that came with them.
 var _held_says: Array = []
 var _early_audio: Array = []
 ## This summon picked a session up, and the room it was in before.
 var _resumed := false
 var _resumed_from := ""
+## ... and it did so because the player changed room (follow me), not because someone touched the screen.
+var _followed := false
+## This room's pod, lit because Synth is out through ANOTHER Summoner (the invisible host that carried them in): a pod
+## that said "Off" with Synth standing beside the player was a lie. It shows the host's rift as its own, and a touch, the
+## menu's button or the chat page's "Send back" all end it there. Never true of a host.
+var _mirroring := false
+var _mirror_clock := 0.0
+var _mirror_open := 0.0
+## They are crossing from one room to the next with the player ("follow me"): this Summoner and their body are parked on the
+## root, the link stays open, and nothing of them is drawn or run until the new room is up (see `_begin_transit`).
+var _in_transit := false
+var _transit_from := ""
+## An invisible pod RiftFollow put in a room that has none, to hold the rift there (see RiftFollow). Set before it is added.
+## It is not drawn, not grabbed, not saved with the room, and it frees itself when the rift closes.
+var host_only := false
+## They stepped out beside the player, not out of the capsule: it may be far, and then the way back is a dissolve on the spot.
+var _beside := false
 var _pulse := 0.0
 var _state_clock := 0.0
 ## Was the body settled at the last look: a change of it is sent at once, not at the next STATE_INTERVAL.
@@ -201,6 +227,13 @@ func _ready() -> void:
 	center_of_mass = Vector3(0.0, CENTER_OF_MASS_Y, 0.0)
 	angular_damp = maxf(angular_damp, 2.0)
 	_show_idle()
+	add_to_group("rift_summoner")
+	_watch_scene_manager()
+	if host_only:
+		_become_host()
+		_follow_summon()
+		return
+	_follow_if_pending()
 
 
 ## Set down by aiming at the floor, on whichever RetroXR this runs in:
@@ -212,6 +245,8 @@ func _ready() -> void:
 ##     does not appear at all (the newer RetroXR deleted that class on 2026-11-13).
 ## With neither it is just dropped where it is let go.
 func _add_floor_placement() -> void:
+	if host_only:
+		return
 	if &"ray_floor_preview_default" in self:
 		set(&"ray_floor_preview_default", true)
 		return
@@ -334,6 +369,10 @@ func toggle_options_ui(camera: Node3D) -> void:
 
 ## A hand over the screen (VR), or a click on it (desktop).
 func _on_screen_touched() -> void:
+	if _mirroring:
+		if _mirror_open >= DISMISS_GRACE:
+			set_on(false)
+		return
 	match _phase:
 		Phase.IDLE:
 			set_on(true)
@@ -348,19 +387,26 @@ func _on_screen_touched() -> void:
 
 
 func toggle() -> void:
-	set_on(_phase == Phase.IDLE)
+	set_on(not is_on())
 
 
-## True from the touch until they have left again.
+## True from the touch until they have left again (and while the host that carried them in holds them: see `_mirroring`).
 func is_on() -> bool:
-	return _phase != Phase.IDLE
+	return _phase != Phase.IDLE or _mirroring
 
 
 func phase() -> int:
-	return _phase
+	return int(Phase.OPEN) if _mirroring else _phase
 
 
 func set_on(on: bool) -> void:
+	if _mirroring:
+		# Theirs is the host's rift: it is the one to end (they dissolve where they stand), and this pod goes dark with it.
+		if not on:
+			var host := RiftFollow.carrier(get_tree(), self)
+			if host != null:
+				host.call("set_on", false)
+		return
 	if on:
 		if _phase == Phase.IDLE:
 			_begin_summon()
@@ -374,12 +420,21 @@ func set_on(on: bool) -> void:
 
 # ── the sequence ─────────────────────────────────────────────────────────────
 
-func _begin_summon() -> void:
+## `followed`: the player's "follow me" brought them (see _follow_if_pending), not a hand on the screen.
+func _begin_summon(followed: bool = false) -> void:
+	for other: Node in get_tree().get_nodes_in_group("rift_summoner"):
+		if other != self and other.has_method("is_on") and bool(other.call("is_on")):
+			# One rift at a time: they came with the player and the server would refuse a second one as busy.
+			_set_status("Synth is already with you (they came along). Send them back from their chat page first.", false)
+			print("[Rift] summoning refused: Synth is already here through another Summoner")
+			return
+	_followed = followed
+	_beside = false
 	var settings: Dictionary = RiftSettings.load_settings()
 	var server := RiftSettings.server_of(settings)
 	var url: String = Protocol.socket_url(server, str(settings.get("token", "")))
 	var hello: Dictionary = Protocol.hello(_room_id(), ["motion", "speech"],
-		Protocol.WANTED_ANIMATIONS, MOD_VERSION, _resume_session)
+		Protocol.WANTED_ANIMATIONS, MOD_VERSION, _resume_session, RiftSettings.follow_me_on())
 	print("[Rift] summoning (room=%s%s)" % [_room_id(), ", asking to resume session %s" % _resume_session if _resume_session != "" else ""])
 	_charge_t = 0.0
 	_link_ready = false
@@ -396,9 +451,13 @@ func _begin_summon() -> void:
 	_set_phase(Phase.CHARGING)
 	_set_status("Connecting to %s ..." % server, false)
 	_show_charging()
-	_play(_sfx, "rise")
-	if not _sfx.finished.is_connected(_on_rise_finished):
-		_sfx.finished.connect(_on_rise_finished)
+	if followed:
+		# They come with the player, not out of the capsule: no rite of summoning, no beam standing in the room.
+		_beam.visible = false
+	else:
+		_play(_sfx, "rise")
+		if not _sfx.finished.is_connected(_on_rise_finished):
+			_sfx.finished.connect(_on_rise_finished)
 	if not _link.open_rift(url, hello):
 		# open_rift has already said why, through closed(); nothing more to do.
 		pass
@@ -423,11 +482,14 @@ func _on_download_progress(url_path: String, got: int, total: int) -> void:
 func _on_opened(welcome: Dictionary) -> void:
 	_link_ready = true
 	_resumed = bool(welcome.get("resumed", false))
-	_resumed_from = _resume_room if _resumed else ""
+	# A follow comes whether or not the SERVER still had the session (it ends one that sat idle too long): the player
+	# changed room and asked for them, so they appear beside the player either way.
+	_resumed_from = _resume_room if (_resumed or _followed) else ""
 	var sid := str(welcome.get("session", ""))
 	if sid != "":
 		_resume_session = sid
 		_resume_room = _room_id()
+		_resume_scene = _scene_instance()
 	print("[Rift] session %s%s" % [sid, (" RESUMED (from room '%s'): the conversation goes on" % _resumed_from) if _resumed else " (new)"])
 	if RiftSettings.forget_pending():
 		_link.send_frame({"type": "forget"})
@@ -445,11 +507,16 @@ func _on_opened(welcome: Dictionary) -> void:
 
 
 func _process(delta: float) -> void:
+	if _in_transit:
+		return
+	if not host_only:
+		_mirror_tick(delta)
 	match _phase:
 		Phase.CHARGING:
 			_charge_t += delta
 			_animate_charge()
-			if _link_ready and _charge_t >= charge_seconds and _assets_state != "loading":
+			# A follow does not wait out the charge's rise: they are there the moment they are loaded.
+			if _link_ready and _charge_t >= (FOLLOW_CHARGE if _followed else charge_seconds) and _assets_state != "loading":
 				_arrive()
 		Phase.OPEN:
 			_open_t += delta
@@ -486,10 +553,12 @@ func _animate_charge() -> void:
 func _arrive() -> void:
 	_set_phase(Phase.ARRIVING)
 	_stop(_hum)
-	_play(_sfx, "arrive")
+	if not _followed:
+		_play(_sfx, "arrive")
 	_set_status("Synth is arriving ...", false)
 	_screen_text("RIFT // STABLE\nSYNTH ARRIVING")
-	_flash()
+	if not _followed:
+		_flash()
 	if not _spawn_body():
 		_abort("no_body", true)
 		return
@@ -512,26 +581,44 @@ func _arrive() -> void:
 		_puppet = null
 	elif _assets_state == "failed":
 		print("[Rift] their own body could not be loaded: they arrive as a capsule")
-	# Intangible and half there until they are actually out of the pod.
-	_body.set_ethereal(true)
-	_body.hide_until_summoned()
-	await _body.appear(0.7)
-	if not _still_arriving():
-		return
-	# Step out of the capsule, to its front, and turn to the player.
-	var out := _floor_below(global_position + (global_basis.z * STEP_OUT))
-	await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
-	if not _still_arriving():
-		return
-	# Out of the pod: only now does they become solid.
-	_flash()
-	await _body.materialise(0.5)
-	if not _still_arriving():
-		return
+	# "Follow me": they appear beside the player, wherever there is room (FollowSpot), not out of the capsule.
+	var beside: Dictionary = _follow_spot() if _followed else {"ok": false}
+	if bool(beside["ok"]):
+		var at: Vector3 = beside["pos"]
+		var heading: Vector3 = beside["facing"]
+		_body.anchor = at
+		_body.global_position = at
+		_body.global_rotation.y = atan2(-heading.x, -heading.z)
+		_beside = true
+		print("[Rift] follow me: they appear beside the player at %s" % str(at))
+	elif _followed:
+		print("[Rift] follow me: no free spot beside the player, they step out of the capsule")
+	if _beside:
+		# They come with the player: there at once, solid, with no fade, no flash and no sound.
+		_body.set_ethereal(false)
+	else:
+		# Intangible and half there until they are actually out of the pod.
+		_body.set_ethereal(true)
+		_body.hide_until_summoned()
+		await _body.appear(0.7)
+		if not _still_arriving():
+			return
+	if not _beside:
+		# Step out of the capsule, to its front, and turn to the player.
+		var out := _floor_below(global_position + (global_basis.z * STEP_OUT))
+		await _body.act("move", {"x": out.x, "y": out.y, "z": out.z})
+		if not _still_arriving():
+			return
+	# Out of the pod (or in the room): only now does they become solid.
+	if not _beside:
+		_flash()
+		await _body.materialise(0.5)
+		if not _still_arriving():
+			return
 	await _body.act("look", {"target": "player"})
 	if not _still_arriving():
 		return
-	if not _resumed:
+	if not _resumed and not _followed:
 		_body.play_once("greet")   # the same conversation going on is not greeted again
 	_open_t = 0.0
 	_pulse = 0.0
@@ -629,7 +716,13 @@ func _still_arriving() -> bool:
 func _tell_synth_she_was_summoned() -> void:
 	# At the welcome there is no body yet: look from where it WILL stand, out of the pod's front, facing out.
 	var out := _floor_below(global_position + global_basis.z * STEP_OUT)
-	var placed := _placed_from(out, global_basis.z, EYE_GUESS, RID())
+	var facing := global_basis.z
+	if _followed:
+		var spot := _follow_spot()
+		if bool(spot["ok"]):
+			out = spot["pos"]
+			facing = spot["facing"]
+	var placed := _placed_from(out, facing, EYE_GUESS, RID())
 	# What they saw on arrival is the baseline: only what changes from here is news.
 	_room_memory.clear()
 	_seen_ids.clear()
@@ -638,10 +731,13 @@ func _tell_synth_she_was_summoned() -> void:
 	SummonerView.room_changes(_room_memory, placed, true)
 	_room_seen = true
 	_link.send_frame(Protocol.state(out, "", {"entities": _json_entities(placed)}))
-	var text := SummonerView.summoned_text(_room_id(), placed, {"from_room": _resumed_from} if _resumed else {})
+	var follow_me := RiftSettings.follow_me_on()
+	var text := SummonerView.summoned_text(_room_id(), placed,
+		{"from_room": _resumed_from, "followed": _followed, "resumed": _resumed} if (_resumed or _followed) else {}, follow_me)
 	print("[Rift] telling Synth: %s" % text)
 	_link.send_frame(Protocol.event("summoned", text, "", 1.0,
-		{"room": _room_id(), "seen": _json_entities(placed), "resumed": _resumed}))
+		{"room": _room_id(), "seen": _json_entities(placed), "resumed": _resumed, "followed": _followed,
+		"follow_me": follow_me}))
 
 
 ## Send them back: they step into the capsule and dissolve, the rift closes.
@@ -655,7 +751,10 @@ func _dismiss() -> void:
 	if _body != null and is_instance_valid(_body):
 		_body.set_ethereal(true)   # into the pod: it is not shoved aside on the way in
 		var home := _floor_below(global_position)
-		await _body.act("move", {"x": home.x, "y": home.y, "z": home.z})
+		# One that came beside the player may be on the far side of the room from the pod, and past their leash: they
+		# dissolve where they stand.
+		if (not _beside or _body.global_position.distance_to(home) < 3.0) and not host_only:
+			await _body.act("move", {"x": home.x, "y": home.y, "z": home.z})
 		if _body != null and is_instance_valid(_body):
 			await _body.disappear(0.5)
 	_flash()
@@ -663,11 +762,215 @@ func _dismiss() -> void:
 
 
 ## The room is going away with this pod: the socket drops WITHOUT a goodbye, so Synth keeps the session for its grace
-## window and the next Summoner (in the next room) can pick it up with `hello.resume`.
+## window and the next Summoner (in the next room) can pick it up with `hello.resume`. With "follow me" on, and Synth
+## really summoned (not charging, not on their way back in), the next room's pod does so by itself.
 func _exit_tree() -> void:
+	if _in_transit:
+		return   # parked on the root on purpose (the reparent exits and enters the tree), not leaving
 	if _link != null and is_instance_valid(_link) and _link.is_open():
-		print("[Rift] the room is closing with the rift open: leaving without a goodbye (session %s can be resumed)" % _resume_session)
+		var follow := RiftSettings.follow_me_on() and _resume_session != "" and _phase in [Phase.ARRIVING, Phase.OPEN]
+		if follow:
+			RiftFollow.leaving()
+		print("[Rift] the room is closing with the rift open: leaving without a goodbye (session %s can be resumed%s)" % [
+			_resume_session, "; follow me: the next room's Summoner brings them along" if follow else
+			" (not following: option %s, phase %d)" % ["on" if RiftSettings.follow_me_on() else "off", _phase]])
 		_link.close_rift("room_change", false)
+
+
+## A new room, and the player left the last one with Synth out and "follow me" on: summon them here, the same session.
+## The first pod to be readied takes the call, and only a pod of ANOTHER room answers it (a pod put down again in the room
+## they were in is not a room change). The room's name is read after the delay: while it loads, the scene is not set yet.
+func _follow_if_pending() -> void:
+	if not RiftFollow.pending():
+		return
+	if not RiftFollow.take() or _resume_session == "":
+		print("[Rift] follow me: not answered (session '%s', option %s)" % [
+			_resume_session, "on" if RiftSettings.follow_me_on() else "off"])
+		return
+	_follow_summon()
+
+
+## A pod of this room, idle, while an invisible host holds Synth's rift: it lights up as if the rift were its own, and goes
+## dark again when the host's ends. Looked at a few times a second.
+func _mirror_tick(delta: float) -> void:
+	if _mirroring:
+		_mirror_open += delta
+		_pulse += delta
+		_beam_mat.albedo_color.a = 0.28 + 0.1 * sin(_pulse * 2.4)
+	_mirror_clock += delta
+	if _mirror_clock < 0.25:
+		return
+	_mirror_clock = 0.0
+	var held := _phase == Phase.IDLE and RiftFollow.carrier(get_tree(), self) != null
+	if held and not _mirroring:
+		_mirroring = true
+		_mirror_open = 0.0
+		_pulse = 0.0
+		_set_light(LIGHT_CYAN)
+		_light_mat.emission_energy_multiplier = 1.6
+		_screen_mat.albedo_color = LIGHT_CYAN
+		_screen_label.modulate = LIGHT_CYAN
+		_screen_text("RIFT // OPEN\nSYNTH ONLINE")
+		_beam.visible = true
+		_beam.scale = Vector3.ONE
+		_set_status("Open: Synth is with you (they came along from the last room). Point at them and press Tab to talk.", true)
+		print("[Rift] this Summoner shows the rift the invisible one holds for them")
+	elif _mirroring and not held:
+		_mirroring = false
+		_show_idle()
+		_set_status("Off", false)
+		print("[Rift] the rift the invisible Summoner held is over: this Summoner goes dark")
+
+
+# ── crossing into the next room with the player ("follow me") ────────────────────────────────────────────────────────
+
+## Both signals of RetroXR's SceneManager, when there is one: `scene_changed` is the moment the old room is still up and
+## already saved, `scene_content_ready` the moment the new one is up with its objects back.
+func _watch_scene_manager() -> void:
+	var sm := get_node_or_null("/root/SceneManager")
+	if sm == null:
+		return
+	if sm.has_signal("scene_changed"):
+		sm.connect("scene_changed", _on_scene_changing)
+	if sm.has_signal("scene_content_ready"):
+		sm.connect("scene_content_ready", _on_scene_content)
+
+
+## A room is about to be left. With Synth out and "follow me" on, they and the link are NOT left with it: this Summoner
+## (the room's pod, or the invisible one already carrying them) and their body are moved onto the root, where the room's
+## teardown does not reach them, and wait there, hidden and still, with the socket open. Nothing is closed, nothing is
+## fetched, no session is asked for again: they are in the next room the moment it is up (`_arrive_with_player`).
+func _on_scene_changing(_scene_id: String) -> void:
+	if _in_transit or _phase != Phase.OPEN or _body == null or not is_instance_valid(_body) or _link == null or not _link.is_open():
+		return
+	if not RiftSettings.follow_me_on():
+		if host_only:
+			_leave_with_the_room()
+		return
+	# Not `_room_id()`: SceneManager has already claimed the NEW room's id when it says the old one is going.
+	_transit_from = _resume_room
+	_in_transit = true   # before anything moves: the reparent exits and enters the tree, and that is not a leaving
+	var root := get_tree().root
+	# Whatever they were doing is over; they are not run while there is no room to run in.
+	_body.act("stop", {})
+	_body.visible = false
+	_body.process_mode = Node.PROCESS_MODE_DISABLED
+	if get_parent() != root:
+		host_only = true
+		_become_host()
+		reparent(root)
+	if _body.get_parent() != root:
+		_body.reparent(root)
+	print("[Rift] follow me: Synth crosses from '%s' to the next room with the player, the link stays open" % _transit_from)
+
+
+## No "follow me" any more, and an invisible host is all that held them: the rift closes as a room's pod would on its way
+## out (no goodbye, so the session can be picked up again), and the host goes.
+func _leave_with_the_room() -> void:
+	print("[Rift] the player left the room with follow me off: the invisible Summoner lets them go")
+	_link.close_rift("room_change", false)
+	_remove_body()
+	_free_fetcher()
+	_set_phase(Phase.IDLE)
+	_free_host()
+
+
+## The new room is up. Their body is put beside the player where they spawned, at once, and Synth is told.
+func _on_scene_content(_scene_id: String) -> void:
+	if _in_transit:
+		_arrive_with_player()
+
+
+func _arrive_with_player() -> void:
+	var waited := 0.0
+	while get_viewport().get_camera_3d() == null and waited < 3.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	if _phase != Phase.OPEN or _body == null or not is_instance_valid(_body):
+		_in_transit = false   # the link went while they crossed: _on_closed has put everything away
+		return
+	var spot := _follow_spot()
+	var at: Vector3
+	var heading: Vector3
+	var cam := get_viewport().get_camera_3d()
+	if bool(spot["ok"]):
+		at = spot["pos"]
+		heading = spot["facing"]
+	else:
+		# No room beside them: where the player spawns is where they are, a pace ahead and facing back.
+		var fwd := -cam.global_basis.z if cam != null else Vector3(0.0, 0.0, -1.0)
+		fwd.y = 0.0
+		fwd = fwd.normalized() if fwd.length() > 0.01 else Vector3(0.0, 0.0, -1.0)
+		var feet := (cam.global_position - Vector3(0.0, EYE_GUESS, 0.0)) if cam != null else Vector3.ZERO
+		at = _floor_below(feet + fwd * 0.9)
+		heading = -fwd
+	global_position = at
+	_body.anchor = at
+	_body.global_position = at
+	_body.global_rotation.y = atan2(-heading.x, -heading.z)
+	_body.room_name = _room_id()
+	_body.process_mode = Node.PROCESS_MODE_INHERIT
+	_body.set_ethereal(false)
+	_body.visible = true
+	_body.attend_player(3.0)
+	var from_room := _transit_from
+	_in_transit = false
+	_beside = true
+	_resume_room = _room_id()
+	_resume_scene = _scene_instance()
+	_state_clock = 0.0
+	_was_settled = true
+	_room_memory.clear()
+	_seen_ids.clear()
+	_watching.forget()
+	_room_seen = false
+	var placed := _placed_entities()
+	SummonerView.room_changes(_room_memory, placed, true)
+	_room_seen = true
+	_link.send_frame(_state_frame())
+	var text := SummonerView.carried_text(from_room, _room_id(), placed, RiftSettings.follow_me_on())
+	print("[Rift] follow me: they are in '%s' beside the player at %s. Telling Synth: %s" % [_room_id(), str(at), text])
+	_link.send_frame(Protocol.event("room_changed", text, "", 1.0,
+		{"from_room": from_room, "room": _room_id(), "seen": _json_entities(placed), "follow_me": true}))
+
+
+## The host has nothing to show once the rift is shut: it goes.
+func _free_host() -> void:
+	if host_only and is_inside_tree():
+		print("[Rift] the invisible Summoner is done with this room")
+		queue_free()
+
+
+## An invisible pod (see `host_only`): holds the rift, is never seen, grabbed, laser-picked or saved with the room.
+func _become_host() -> void:
+	visible = false
+	remove_from_group("spawned")
+	freeze = true
+	collision_layer = 0
+	collision_mask = 0
+	if _button != null:
+		_button.monitoring = false
+		_button.monitorable = false
+		_button.collision_layer = 0
+		_button.collision_mask = 0
+
+
+func _follow_summon() -> void:
+	await get_tree().create_timer(FOLLOW_DELAY).timeout
+	if not is_inside_tree() or _phase != Phase.IDLE:
+		print("[Rift] follow me: this pod is gone or already busy")
+		return
+	if _resume_scene == _scene_instance():
+		print("[Rift] follow me: this is the room they were in, not a new one")
+		return
+	print("[Rift] follow me: the player came here from '%s' with Synth out, summoning them" % _resume_room)
+	_begin_summon(true)
+
+
+## The player switched "follow me" in the menu: Synth is told at once if they are out, else the next hello says it.
+func follow_me_changed(on: bool) -> void:
+	if _link != null and _link.is_open():
+		_link.send_frame(Protocol.event("follow_me", SummonerView.follow_me_text(on), "", 0.8, {"follow_me": on}))
 
 
 ## The pod's menu: forget the chat. The saved log and the body's go at once; Synth is told now when the rift is open,
@@ -698,6 +1001,7 @@ func _close(reason: String) -> void:
 	_set_phase(Phase.IDLE)
 	_set_status("Off" if reason == "switched_off" else _reason_text(reason), false)
 	_show_idle()
+	_free_host()
 
 
 ## The rift failed, or was called off, before or during the arrival.
@@ -717,6 +1021,7 @@ func _abort(reason: String, with_sound: bool) -> void:
 	_show_idle()
 	if reason != "switched_off":
 		_screen_text("RIFT // FAULT\nLINK FAILED")
+	_free_host()
 
 
 func _on_closed(reason: String) -> void:
@@ -734,6 +1039,7 @@ func _on_closed(reason: String) -> void:
 	_set_status(_reason_text(reason), false)
 	_show_idle()
 	_screen_text("RIFT // FAULT\nLINK FAILED")
+	_free_host()
 
 
 ## What the player is told when the rift shuts, in words rather than codes.
@@ -759,6 +1065,9 @@ static func _reason_text(reason: String) -> String:
 
 
 func _on_action(id: int, action: String, payload: Dictionary) -> void:
+	if _in_transit:
+		_link.send_frame(Protocol.result(id, false, "changing_room: you are moving to the next room with the player, try again in a moment"))
+		return
 	# Still in the capsule: the first prompt was sent at the welcome, so a greeting can arrive long before they are out.
 	# A `say` is held (answered at once) and comes out when they step out; nothing else makes sense yet.
 	if _phase == Phase.CHARGING or _phase == Phase.ARRIVING:
@@ -981,6 +1290,39 @@ func _floor_below(point: Vector3) -> Vector3:
 	return (hit["position"] as Vector3) if hit.has("position") else point
 
 
+## Where they appear beside the player ("follow me"): {ok, pos, facing}, from the player's feet and the way they face,
+## by FollowSpot's order, over what the physics world says is free. ok is false with no camera or no room at all.
+func _follow_spot() -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return {"ok": false}
+	var eye := cam.global_position
+	var forward := -cam.global_basis.z
+	if Vector2(forward.x, forward.z).length() < 0.2:
+		# Looking straight up or down: the way their head points is the way they face.
+		forward = cam.global_basis.y * (1.0 if forward.y < 0.0 else -1.0)
+	var down := _floor_below(Vector3(eye.x, eye.y - 0.5, eye.z))
+	# A hit near their eyes is the player's own collider, not the floor.
+	var feet := Vector3(eye.x, down.y if down.y < eye.y - 0.5 else eye.y - EYE_GUESS, eye.z)
+	var nav := SynthNav.new()
+	nav.space = get_world_3d().direct_space_state
+	nav.mask = SynthNav.MASK
+	nav.exclude = [get_rid()]
+	nav.check_ground = true
+	var free := func(p: Vector3) -> Variant:
+		var f := _floor_below(Vector3(p.x, feet.y, p.z))
+		# A table top over the spot is not its floor: they would stand on it.
+		if absf(f.y - feet.y) > SynthNav.STEP:
+			return null
+		# A cartridge or a cable on the floor is not a step up: they stand on the floor itself, as the player does.
+		if absf(f.y - feet.y) < 0.12:
+			f.y = feet.y
+		return f if nav.spot_free(f) else null
+	var clear := func(from: Vector3, to: Vector3) -> bool:
+		return _line_of_sight_from(from + Vector3(0.0, 1.0, 0.0), to + Vector3(0.0, 1.0, 0.0), null, RID())
+	return FollowSpot.pick(feet, forward, free, clear)
+
+
 # ── what they see ────────────────────────────────────────────────────────────
 
 ## Everything in the room, in world space: the spawned objects and the player (no model: their head is the camera).
@@ -1193,9 +1535,29 @@ func _check_player() -> void:
 	_player_near = near
 
 
+## The room's id: SceneManager's ("bedroom", "arcade") when it names the scene that is up. The scene node's own name is the
+## fallback and is NOT a room's identity (every RetroXR room is called "Root"; see `_scene_instance`).
+const ROOM_CATALOG_PATH := "res://Scripts/Data/room_catalog.gd"
+
+
 func _room_id() -> String:
 	var scene := get_tree().current_scene
-	return str(scene.name).to_lower() if scene != null else "room"
+	if scene == null:
+		return "room"
+	var sm := get_node_or_null("/root/SceneManager")
+	if sm != null and scene.scene_file_path != "" and ResourceLoader.exists(ROOM_CATALOG_PATH):
+		var id := str(sm.get("current_scene_id"))
+		var catalog: Variant = load(ROOM_CATALOG_PATH)
+		if id != "" and catalog is GDScript and bool((catalog as GDScript).call("has", id)) \
+				and str((catalog as GDScript).call("path_of", id)) == scene.scene_file_path:
+			return id
+	return str(scene.name).to_lower()
+
+
+## Which scene node is up: a room that is left and entered again is a NEW node, whatever it is called.
+func _scene_instance() -> int:
+	var scene := get_tree().current_scene
+	return scene.get_instance_id() if scene != null else 0
 
 
 # ── lamp, screen, sound ──────────────────────────────────────────────────────

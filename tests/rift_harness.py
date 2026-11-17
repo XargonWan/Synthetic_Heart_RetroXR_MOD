@@ -22,7 +22,10 @@ vessel_retroxr_api.webui_auth.configured_token = (lambda: "the-real-token") if o
 PORT = 8765
 # HOST=1 runs Godot on the host through flatpak-spawn (needed from a flatpak session).
 # PROBE=summoner runs the Summoner OBJECT (needs the autoloads); default is the headless link+body.
+# PROBE=follow runs follow_e2e_probe.tscn: a room change with "follow me", the next room's pod opening the rift by itself.
 PROBE_ARGS = (["res://mods/xenu.synth_rift/tests/summoner_probe.tscn"] if os.environ.get("PROBE") == "summoner"
+              else ["res://mods/xenu.synth_rift/tests/follow_e2e_probe.tscn"] if os.environ.get("PROBE") == "follow"
+              else ["res://mods/xenu.synth_rift/tests/carry_e2e_probe.tscn"] if os.environ.get("PROBE") == "carry"
               else ["--script", "res://mods/xenu.synth_rift/tests/e2e_probe.gd"])
 GODOT = os.environ.get("GODOT", os.path.expanduser("~/Godot/Godot_v4.7.2-stable_linux.x86_64"))
 PROJECT = os.environ.get("RETROXR_PROJECT", os.path.expanduser("~/gits/RetroXR-xargon/RetroXR"))
@@ -109,6 +112,26 @@ async def _drive():
     else:
         print("[synth] NEVER CONNECTED"); return
     print("[synth] rift open; hello =", conn._hello)
+    if os.environ.get("PROBE") == "carry":
+        # The room change is played in the probe; here: what Synth is told when they are carried into the next room.
+        for _ in range(900):
+            if any(e.event_type == "room_changed" for e in EVENTS):
+                break
+            await asyncio.sleep(0.1)
+        for e in EVENTS:
+            if e.event_type == "room_changed":
+                print(f"[synth] event room_changed: {e.summary[:200]!r} data={ {k: (e.data or {}).get(k) for k in ('from_room', 'room', 'follow_me')} }")
+        return
+    if os.environ.get("PROBE") == "follow":
+        for _ in range(300):
+            if any(e.event_type == "summoned" for e in EVENTS):
+                break
+            await asyncio.sleep(0.1)
+        for e in EVENTS:
+            if e.event_type == "summoned":
+                d = e.data or {}
+                print(f"[synth] CHECK {'ok  ' if d.get('followed') and d.get('follow_me') else 'FAIL'} follow: summoned says they followed ({e.summary[:140]!r}, data={ {k: d.get(k) for k in ('followed', 'resumed', 'follow_me')} })")
+        return
     if os.environ.get("PROBE") != "summoner":
         # The player speaks to them: the clip the probe sends must come out as a chat line.
         chat = await wait_event("chat", timeout=10.0)
@@ -337,6 +360,10 @@ async def main():
     st = asyncio.create_task(server.serve())
     await asyncio.sleep(1.0)
     env = dict(os.environ, XENU_SYNTH_URL=f"127.0.0.1:{PORT}")
+    if os.environ.get("PROBE") in ("follow", "carry"):
+        import tempfile
+        env["XENU_SYNTH_FOLLOW"] = "1"
+        env["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rift_probe_", dir=os.path.expanduser("~/.cache"))
     if os.environ.get("PROBE") == "summoner":
         # The Summoner probe types the server into the object's menu itself, in a
         # throw-away data dir so the player's real settings are never touched.
@@ -354,7 +381,7 @@ async def main():
     if os.environ.get("HOST"):
         # Run Godot on the host from inside a flatpak (the GDExtensions only load there;
         # loopback is shared). The probe's own variables go in with --env.
-        keys = ("GAZE_DONE_FILE", "XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE", "PROBE_TIMEOUT")
+        keys = ("GAZE_DONE_FILE", "XENU_SYNTH_URL", "XENU_SYNTH_TOKEN", "PROBE_SERVER", "PROBE_EXPECT", "XDG_DATA_HOME", "SHOTS", "CHARGE", "PROBE_TIMEOUT", "PROBE_GHOST")
         cmd = ["flatpak-spawn", "--host", *[f"--env={k}={env[k]}" for k in keys if k in env], *cmd]
     proc = await asyncio.create_subprocess_exec(
         *cmd,
