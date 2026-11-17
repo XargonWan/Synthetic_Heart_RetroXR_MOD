@@ -61,24 +61,42 @@ static func place(entities: Array, origin: Vector3, forward: Vector3) -> Array:
 
 
 ## The message Synth reads when they have just been summoned.
-## `resume` ({from_room}) when the session is one that was picked up again: it is the same conversation, so it says
-## so (and says where they were), and does not tell them to introduce themselves.
-static func summoned_text(room: String, placed: Array, resume: Dictionary = {}) -> String:
+## `resume` ({from_room, followed, resumed}) when the session is one that was picked up again, or they followed the player:
+## it is the same conversation, so it says so (and says where they were), and does not tell them to introduce themselves.
+## `followed`: they came by themselves because the player changed room with "follow me" on, not because the player
+## switched the pod on; `resumed` false then: the server began a new session (see the follow text).
+## `follow_me`: the player's option, which Synth is told so it can say it ("I will come with you") and plan by it.
+static func summoned_text(room: String, placed: Array, resume: Dictionary = {}, follow_me: bool = false) -> String:
 	# This is the FIRST PROMPT: it goes at the welcome, while they are still in the capsule, so the model has the charge
 	# and the climb out to make a greeting, and `say` is held until they step out.
-	var front: Array = placed.filter(func(e: Dictionary) -> bool: return e["front"])
-	var behind: Array = placed.filter(func(e: Dictionary) -> bool: return not e["front"])
 	var text := "You are being summoned into the RetroXR room '%s' through the Synthetic Heart Rift Summoner. You are inside its capsule and will step out, in front of the player, in a few seconds. " % room
 	var held := "Until you step out only `say` works, and what you say is held: it comes out of your mouth the moment you are out. "
 	if not resume.is_empty():
 		var from_room := str(resume.get("from_room", ""))
-		if from_room != "" and from_room != room:
+		if bool(resume.get("followed", false)):
+			# "Follow me": the player changed room and they came by themselves, beside the player. The SERVER may have
+			# ended the old session meanwhile (`resumed` false: its own idle timeout), and then it is a new one that
+			# still has the player's chat: they have just been together, so no introduction either way.
+			var same := "This is the same conversation going on: do not introduce yourself again. " if bool(resume.get("resumed", true)) \
+				else "You were with them a moment ago in the other room: do not introduce yourself again. "
+			text = "The player changed room, from the RetroXR room '%s' to the room '%s', and you followed them (their \"follow me\" option is on). You will appear right beside them in a few seconds, not out of a capsule. %s" % [from_room, room, same]
+		elif from_room != "" and from_room != room:
 			text = "You have come with the player from the RetroXR room '%s' to the room '%s', through the Synthetic Heart Rift Summoner there. You are inside its capsule and will step out in a few seconds. This is the same conversation going on: do not introduce yourself again. " % [from_room, room]
 		else:
 			text = "The connection to you was cut for a moment and is back: you are in the RetroXR room '%s', inside the Summoner's capsule, and will step out in a few seconds. This is the same conversation going on: do not introduce yourself again. " % room
 	else:
 		text += "Say hello to them. "
 	text += held
+	text += follow_me_text(follow_me) + " "
+	text += _view_text(placed)
+	return text.strip_edges()
+
+
+## What is in front of them and where the player is, in words: the end of the first prompt and of a room change's.
+static func _view_text(placed: Array) -> String:
+	var text := ""
+	var front: Array = placed.filter(func(e: Dictionary) -> bool: return e["front"])
+	var behind: Array = placed.filter(func(e: Dictionary) -> bool: return not e["front"])
 	# The player first: they are who called them.
 	var player: Dictionary = {}
 	for e: Dictionary in front:
@@ -102,7 +120,22 @@ static func summoned_text(room: String, placed: Array, resume: Dictionary = {}) 
 	var behind_others: Array = behind.filter(func(e: Dictionary) -> bool: return str(e.get("type", "")) != "player")
 	if not behind_others.is_empty():
 		text += "Behind you there are %d more things. " % behind_others.size()
-	return text.strip_edges()
+	return text
+
+
+## What Synth reads when the player changed room and they came along with their link and body intact ("follow me"): not a
+## summoning at all, so no capsule, no greeting, nothing held. They are in the new room, beside the player, right now.
+static func carried_text(from_room: String, room: String, placed: Array, follow_me: bool = true) -> String:
+	var text := "The player changed room, from the RetroXR room '%s' to the room '%s', and you came along with them (their \"follow me\" option is on): you are already in the new room, right beside them, and the conversation goes on. Nothing is held and nothing needs introducing. " % [from_room, room]
+	text += follow_me_text(follow_me) + " "
+	return (text + _view_text(placed)).strip_edges()
+
+
+## What Synth is told of the player's "follow me" option: in the first prompt, and when it is switched while they are out.
+static func follow_me_text(on: bool) -> String:
+	if on:
+		return "The player's \"follow me\" option is ON: when the player changes room you come along by yourself, through the Summoner of the new room, and the conversation goes on."
+	return "The player's \"follow me\" option is OFF: if the player changes room you stay behind and the rift closes; they have to summon you again in the new room."
 
 
 static func _label(e: Dictionary) -> String:

@@ -43,6 +43,23 @@ static func set_pictures(on: bool) -> void:
 	print("[Rift] pictures %s" % ("on" if on else "off"))
 
 
+## "Follow me": when they change room with Synth summoned, Synth comes along (the Summoner of the new room opens the rift
+## by itself and picks the conversation up). On unless the player switched it off, so it is the default of the mod.
+static func follow_me_on() -> bool:
+	var env := OS.get_environment("XENU_SYNTH_FOLLOW")
+	if not env.is_empty():
+		return env != "0"
+	return bool(JsonStore.read_dict(FILE, MOD_ID).get("follow_me", true))
+
+
+static func set_follow_me(on: bool) -> void:
+	var s: Dictionary = JsonStore.read_dict(FILE, MOD_ID)
+	s["follow_me"] = on
+	DirAccess.make_dir_recursive_absolute(FILE.get_base_dir())
+	JsonStore.write_dict(FILE, s, MOD_ID)
+	print("[Rift] follow me %s" % ("on" if on else "off"))
+
+
 ## The player asked to forget the chat while the rift was shut: Synth is told the moment it opens.
 static func forget_pending() -> bool:
 	return bool(JsonStore.read_dict(FILE, MOD_ID).get("forget_pending", false))

@@ -154,9 +154,15 @@ static func trusts_unverified_tls(url: String) -> bool:
 	return url.begins_with("wss://") and is_private_host(host_of(url))
 
 
+## `follow_me`: the player's "follow me" option. It is told to Synth twice, so it can say it in the prompt without a server
+## change: as a `follow_me` entry of `capabilities` (which the Rift Vessel already hands the model) and as this field.
 static func hello(room: String, capabilities: Array, animations: Array, mod_version: String,
-		resume: String = "") -> Dictionary:
-	var frame := _hello_frame(room, capabilities, animations, mod_version)
+		resume: String = "", follow_me: bool = false) -> Dictionary:
+	var caps := capabilities.duplicate()
+	if follow_me and not caps.has("follow_me"):
+		caps.append("follow_me")
+	var frame := _hello_frame(room, caps, animations, mod_version)
+	frame["follow_me"] = follow_me
 	# Welcomed before and the socket dropped (a room change, a lost network): name the session to pick it up.
 	if not resume.is_empty():
 		frame["resume"] = resume

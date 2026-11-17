@@ -245,6 +245,14 @@ func centre_of(c: Vector2i) -> Vector3:
 	return _centre_of(c)
 
 
+## Can a body stand at `p` (a point on the floor)? Nothing solid in their cylinder there and, with `check_ground`, floor under
+## it. Asked of the physics world each time, not remembered: for the one-off question of where to put them (FollowSpot).
+func spot_free(p: Vector3) -> bool:
+	if bool(blocked_fn.call(p)):
+		return false
+	return not check_ground or bool(ground_fn.call(p))
+
+
 ## Where they stand is free by definition, whatever touches their margin: say so before asking about a line from here.
 func mark_free(p: Vector3) -> void:
 	_cache[_cell_of(p)] = false
